@@ -1,0 +1,44 @@
+{
+  "name": "evaluxia-backend",
+  "version": "1.0.0",
+  "description": "EvalUXIA — Intelligent UX & Accessibility Evaluation Platform powered by AI, Playwright & MongoDB",
+  "main": "dist/app/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only --ignore-watch node_modules -r tsconfig-paths/register src/app/server.ts",
+    "build": "tsc --project tsconfig.json",
+    "start": "node dist/app/server.js",
+    "lint": "tsc --noEmit",
+    "test": "echo \"Tests coming soon\" && exit 0"
+  },
+  "keywords": [
+    "ux",
+    "accessibility",
+    "ai",
+    "playwright",
+    "evaluation",
+    "automation"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "helmet": "^8.0.0",
+    "mongoose": "^8.0.0",
+    "morgan": "^1.10.0",
+    "playwright": "^1.60.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/morgan": "^1.9.9",
+    "@types/node": "^22.0.0",
+    "ts-node-dev": "^2.0.0",
+    "tsconfig-paths": "^4.2.0",
+    "typescript": "^5.8.3"
+  }
+}
