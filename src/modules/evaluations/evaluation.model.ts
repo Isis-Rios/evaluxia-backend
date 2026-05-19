@@ -1,32 +1,40 @@
-import { Schema, model, Document } from 'mongoose';
+import { Schema, model, Document, Types } from 'mongoose';
 import { EVALUATION_STATUS, EvaluationStatus } from '@/config/constants';
 
 /**
- * Evaluation — Core entity representing a UX evaluation session.
+ * Evaluation — Core entity representing a UX evaluation session (State Machine).
  */
 export interface IEvaluation extends Document {
-  title: string;
-  targetUrl: string;
+  userId: Types.ObjectId;
+  archetypeId: Types.ObjectId;
+  type: string; // 'prototype' | 'website'
+  url: string;
   status: EvaluationStatus;
-  description?: string;
-  findings: string[];        // References to Finding documents
-  aiAnalysis?: string;       // Raw AI analysis text
-  screenshotPaths: string[]; // Paths to captured screenshots
+  
+  // JSON Contract Mapping
+  flowDefinition: {
+    flowDescription: string;
+    totalStepsEstimated: number;
+  };
+  flowState: {
+    currentStep: number;
+    completedSteps: string[];
+    previousActions: Array<{ actionType: string; description: string; result: string }>;
+    blockingError: string | null;
+  };
+  
   createdAt: Date;
   updatedAt: Date;
 }
 
 const EvaluationSchema = new Schema<IEvaluation>(
   {
-    title: {
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    archetypeId: { type: Schema.Types.ObjectId, ref: 'Archetype', required: true },
+    type: { type: String, enum: ['prototype', 'website'], required: true },
+    url: {
       type: String,
-      required: [true, 'Evaluation title is required'],
-      trim: true,
-      maxlength: [200, 'Title cannot exceed 200 characters'],
-    },
-    targetUrl: {
-      type: String,
-      required: [true, 'Target URL is required'],
+      required: [true, 'URL is required'],
       trim: true,
     },
     status: {
@@ -34,14 +42,22 @@ const EvaluationSchema = new Schema<IEvaluation>(
       enum: Object.values(EVALUATION_STATUS),
       default: EVALUATION_STATUS.PENDING,
     },
-    description: {
-      type: String,
-      trim: true,
-      maxlength: [1000, 'Description cannot exceed 1000 characters'],
+    flowDefinition: {
+      flowDescription: { type: String },
+      totalStepsEstimated: { type: Number },
     },
-    findings: [{ type: String }],
-    aiAnalysis: { type: String },
-    screenshotPaths: [{ type: String }],
+    flowState: {
+      currentStep: { type: Number, default: 1 },
+      completedSteps: [{ type: String }],
+      previousActions: [
+        {
+          actionType: { type: String },
+          description: { type: String },
+          result: { type: String, enum: ['success', 'failure'] },
+        },
+      ],
+      blockingError: { type: String, default: null },
+    },
   },
   {
     timestamps: true,

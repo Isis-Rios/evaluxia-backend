@@ -1,56 +1,54 @@
-import { Schema, model, Document } from 'mongoose';
+import { Schema, model, Document, Types } from 'mongoose';
 
-export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type FindingCategory =
-  | 'accessibility'
-  | 'usability'
-  | 'performance'
-  | 'content'
-  | 'navigation'
-  | 'visual';
+export type FindingGroup = 'ux' | 'accessibility';
+export type FindingSeverity = 'high' | 'medium' | 'low';
 
+/**
+ * Finding — Unifies UX and Accessibility findings returned by Gemini.
+ */
 export interface IFinding extends Document {
-  evaluationId: string;
+  evaluationId: Types.ObjectId;
+  iteration: number;
+  findingGroup: FindingGroup;
+  type?: string; // usability, content, interaction, visual (for UX)
   severity: FindingSeverity;
-  category: FindingCategory;
-  title: string;
   description: string;
-  affectedElement?: string;
-  recommendation: string;
-  wcagCriteria?: string;
-  screenshotRef?: string;
-  resolvedAt?: Date;
+  
+  // UX Specific
+  heuristic?: string;
+  affectedArchetypeTraits?: string[];
+  
+  // Accessibility Specific
+  wcagCriterion?: string;
+  
   createdAt: Date;
   updatedAt: Date;
 }
 
 const FindingSchema = new Schema<IFinding>(
   {
-    evaluationId: { type: String, required: true, index: true },
-    severity: {
-      type: String,
-      enum: ['critical', 'high', 'medium', 'low', 'info'],
-      required: true,
-    },
-    category: {
-      type: String,
-      enum: ['accessibility', 'usability', 'performance', 'content', 'navigation', 'visual'],
-      required: true,
-    },
-    title: { type: String, required: true, trim: true },
+    evaluationId: { type: Schema.Types.ObjectId, ref: 'Evaluation', required: true, index: true },
+    iteration: { type: Number, required: true, min: 1 },
+    findingGroup: { type: String, enum: ['ux', 'accessibility'], required: true },
+    type: { type: String },
+    severity: { type: String, enum: ['high', 'medium', 'low'], required: true },
     description: { type: String, required: true },
-    affectedElement: { type: String },
-    recommendation: { type: String, required: true },
-    wcagCriteria: { type: String },
-    screenshotRef: { type: String },
-    resolvedAt: { type: Date },
+    
+    // UX Specific
+    heuristic: { type: String },
+    affectedArchetypeTraits: [{ type: String }],
+    
+    // Accessibility Specific
+    wcagCriterion: { type: String },
   },
   {
     timestamps: true,
     versionKey: false,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 );
 
-FindingSchema.index({ evaluationId: 1, severity: 1 });
+FindingSchema.index({ evaluationId: 1, findingGroup: 1 });
 
 export const Finding = model<IFinding>('Finding', FindingSchema);

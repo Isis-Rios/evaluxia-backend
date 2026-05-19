@@ -14,7 +14,6 @@ import { automationRoutes } from '@/modules/automation/automation.controller';
 import { authRoutes } from '@/modules/auth/auth.routes';
 import { findingsRoutes } from '@/modules/findings/findings.routes';
 import { reportsRoutes } from '@/modules/reports/reports.routes';
-import { evaluatorProfilesRoutes } from '@/modules/evaluator-profiles/evaluator-profiles.routes';
 
 /**
  * createApp — Configures and returns the Express application.
@@ -58,7 +57,6 @@ export function createApp(): Application {
   app.use(`${API_PREFIX}/auth`, authRoutes);
   app.use(`${API_PREFIX}/findings`, findingsRoutes);
   app.use(`${API_PREFIX}/reports`, reportsRoutes);
-  app.use(`${API_PREFIX}/evaluator-profiles`, evaluatorProfilesRoutes);
 
   // ─── 404 Handler ─────────────────────────────────────────────────────────────
   app.use((_req: Request, res: Response) => {
