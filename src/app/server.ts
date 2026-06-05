@@ -12,7 +12,6 @@
 // env must be imported first — validates all env vars before anything else loads
 import { env } from '@/config/env';
 import { connectToDatabase } from '@/infrastructure/database/mongodb';
-import { BrowserManager } from '@/infrastructure/playwright/browser.manager';
 import { createApp } from './app';
 import { APP_NAME, APP_VERSION } from '@/config/constants';
 import http from 'http';
@@ -41,13 +40,8 @@ async function bootstrap(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`\n⚠️   ${signal} received. Shutting down gracefully...`);
 
-    // Stop accepting new connections
     server.close(async () => {
       console.log('   HTTP server closed');
-
-      // Close Playwright browser if running
-      await BrowserManager.getInstance().shutdown();
-
       console.log('✅  Shutdown complete\n');
       process.exit(0);
     });

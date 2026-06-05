@@ -1,0 +1,235 @@
+{
+  "info": {
+    "name": "EvalUXIA Demo - Entrega 2",
+    "description": "Colección mínima para demostrar el flujo end-to-end de evaluación con IA.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Registrar Usuario",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if(jsonData && jsonData.data && jsonData.data.tokens) {",
+              "    pm.environment.set(\"accessToken\", jsonData.data.tokens.accessToken);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"name\": \"Profesor Demo\",\n  \"email\": \"demo@evaluxia.com\",\n  \"password\": \"Seguridad123!\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/api/v1/auth/register",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "register"
+          ]
+        }
+      }
+    },
+    {
+      "name": "2. Login",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if(jsonData && jsonData.data && jsonData.data.tokens) {",
+              "    pm.environment.set(\"accessToken\", jsonData.data.tokens.accessToken);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"demo@evaluxia.com\",\n  \"password\": \"Seguridad123!\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/api/v1/auth/login",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "api",
+            "v1",
+            "auth",
+            "login"
+          ]
+        }
+      }
+    },
+    {
+      "name": "3. Crear Perfil Evaluador",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if(jsonData && jsonData.data && jsonData.data.id) {",
+              "    pm.environment.set(\"evaluatorProfileId\", jsonData.data.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"fullName\": \"María Accesibilidad\",\n  \"phrase\": \"Si no lo veo claro, me voy de la página.\",\n  \"age\": 55,\n  \"profession\": \"Administrativa\",\n  \"maritalStatus\": \"Casada\",\n  \"country\": \"Colombia\",\n  \"city\": \"Bogotá\",\n  \"archetype\": \"The Practical User\",\n  \"biography\": \"Tiene presbicia y navega siempre desde un iPad. Pierde la paciencia si los botones son muy pequeños.\",\n  \"personality\": \"Práctica y con poco tiempo libre.\",\n  \"goals\": [\"Completar tareas rápido\", \"No forzar la vista\"],\n  \"frustrations\": [\"Letras grises sobre blanco\", \"Animaciones rápidas\"],\n  \"techSavviness\": \"low\",\n  \"accessibilityNeeds\": [\"large_text\", \"high_contrast\"],\n  \"preferredDevice\": \"tablet\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/api/v1/evaluator-profiles",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "api",
+            "v1",
+            "evaluator-profiles"
+          ]
+        }
+      }
+    },
+    {
+      "name": "4. Ejecutar Evaluación IA",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "var jsonData = pm.response.json();",
+              "if(jsonData && jsonData.data && jsonData.data.id) {",
+              "    pm.environment.set(\"evaluationId\", jsonData.data.id);",
+              "}"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"evaluatorProfileId\": \"{{evaluatorProfileId}}\",\n  \"title\": \"Análisis de Wikipedia\",\n  \"type\": \"website\",\n  \"url\": \"https://es.wikipedia.org/wiki/Accesibilidad_web\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/api/v1/evaluations",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "api",
+            "v1",
+            "evaluations"
+          ]
+        }
+      }
+    },
+    {
+      "name": "5. Consultar Findings (Resultados de IA)",
+      "request": {
+        "auth": {
+          "type": "bearer",
+          "bearer": [
+            {
+              "key": "token",
+              "value": "{{accessToken}}",
+              "type": "string"
+            }
+          ]
+        },
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/api/v1/findings/evaluation/{{evaluationId}}",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "api",
+            "v1",
+            "findings",
+            "evaluation",
+            "{{evaluationId}}"
+          ]
+        }
+      }
+    }
+  ]
+}

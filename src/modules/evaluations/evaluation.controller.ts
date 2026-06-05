@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response } from 'express';
 import { evaluationService } from './evaluation.service';
 import {
   CreateEvaluationDto,
@@ -9,34 +9,41 @@ import {
 /**
  * EvaluationController — HTTP layer for evaluation routes.
  * Delegates all logic to EvaluationService.
- * All methods are async — Express 5 catches errors automatically.
+ * req.user is guaranteed by authenticate middleware.
  */
 export class EvaluationController {
-  async create(req: Request, res: Response, _next: NextFunction): Promise<void> {
-    const dto = req.body as CreateEvaluationDto;
-    const evaluation = await evaluationService.create(dto);
-    res.status(201).json({ status: 'success', data: evaluation });
-  }
-
-  async findAll(req: Request, res: Response, _next: NextFunction): Promise<void> {
+  async findAll(req: Request, res: Response): Promise<void> {
     const query = req.query as unknown as GetEvaluationsQuery;
-    const result = await evaluationService.findAll(query);
+    const result = await evaluationService.findAll(req.user!.userId, query);
     res.status(200).json({ status: 'success', ...result });
   }
 
-  async findById(req: Request, res: Response, _next: NextFunction): Promise<void> {
-    const evaluation = await evaluationService.findById(req.params['id'] as string);
+  async findById(req: Request, res: Response): Promise<void> {
+    const evaluation = await evaluationService.findById(
+      req.user!.userId,
+      req.params['id'] as string,
+    );
     res.status(200).json({ status: 'success', data: evaluation });
   }
 
-  async update(req: Request, res: Response, _next: NextFunction): Promise<void> {
+  async create(req: Request, res: Response): Promise<void> {
+    const dto = req.body as CreateEvaluationDto;
+    const evaluation = await evaluationService.create(req.user!.userId, dto);
+    res.status(201).json({ status: 'success', data: evaluation });
+  }
+
+  async update(req: Request, res: Response): Promise<void> {
     const dto = req.body as UpdateEvaluationDto;
-    const evaluation = await evaluationService.update(req.params['id'] as string, dto);
+    const evaluation = await evaluationService.update(
+      req.user!.userId,
+      req.params['id'] as string,
+      dto,
+    );
     res.status(200).json({ status: 'success', data: evaluation });
   }
 
-  async delete(req: Request, res: Response, _next: NextFunction): Promise<void> {
-    await evaluationService.delete(req.params['id'] as string);
+  async delete(req: Request, res: Response): Promise<void> {
+    await evaluationService.delete(req.user!.userId, req.params['id'] as string);
     res.status(204).send();
   }
 }

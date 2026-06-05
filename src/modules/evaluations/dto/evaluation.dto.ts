@@ -6,17 +6,19 @@ import { z } from 'zod';
  */
 
 export const CreateEvaluationSchema = z.object({
+  evaluatorProfileId: z.string().min(1, 'evaluatorProfileId is required'),
   title: z
     .string()
     .min(3, 'Title must be at least 3 characters')
     .max(200, 'Title cannot exceed 200 characters'),
-  targetUrl: z
-    .string()
-    .url('targetUrl must be a valid URL (include https://)'),
   description: z
     .string()
     .max(1000, 'Description cannot exceed 1000 characters')
     .optional(),
+  type: z.enum(['prototype', 'website'], {
+    errorMap: () => ({ message: "type must be 'prototype' or 'website'" }),
+  }),
+  url: z.string().url('url must be a valid URL (include https://)'),
 });
 
 export const UpdateEvaluationSchema = CreateEvaluationSchema.partial();

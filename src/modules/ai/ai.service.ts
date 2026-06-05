@@ -29,7 +29,7 @@ export class AiService {
   /**
    * Performs a full UX analysis of a page given its DOM snapshot and context.
    */
-  async analyzeUx(input: UxAnalysisInput): Promise<UxAnalysisOutput> {
+  async analyzeUx(input: UxAnalysisInput): Promise<{ result: UxAnalysisOutput; executionTimeMs: number }> {
     // Validate input contract
     const validated = UxAnalysisInputSchema.safeParse(input);
     if (!validated.success) {
@@ -38,10 +38,14 @@ export class AiService {
 
     const prompt = this.buildUxAnalysisPrompt(validated.data);
 
-    return this.client.generateStructured<UxAnalysisOutput>(
+    const startTime = Date.now();
+    const result = await this.client.generateStructured<UxAnalysisOutput>(
       prompt,
       UxAnalysisOutputSchema,
     );
+    const executionTimeMs = Date.now() - startTime;
+
+    return { result, executionTimeMs };
   }
 
   /**
@@ -51,6 +55,18 @@ export class AiService {
   private buildUxAnalysisPrompt(input: UxAnalysisInput): string {
     return `
 You are an expert UX and accessibility evaluator. Analyze the following web page and return a structured UX evaluation.
+
+**Simulated User Profile (Evaluator):**
+- Name: ${input.evaluatorProfile.fullName}
+- Age: ${input.evaluatorProfile.age} (${input.evaluatorProfile.profession})
+- Archetype: ${input.evaluatorProfile.archetype}
+- Mantra: "${input.evaluatorProfile.phrase}"
+- Tech Savviness: ${input.evaluatorProfile.techSavviness}
+- Accessibility Needs: ${input.evaluatorProfile.accessibilityNeeds.length ? input.evaluatorProfile.accessibilityNeeds.join(', ') : 'None'}
+- Goals: ${input.evaluatorProfile.goals.join(', ')}
+- Frustrations: ${input.evaluatorProfile.frustrations.join(', ')}
+
+Please evaluate the page strictly from the perspective of this user.
 
 **Page URL:** ${input.url}
 **Page Title:** ${input.pageTitle}

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { evaluationController } from './evaluation.controller';
+import { authenticate } from '@/shared/middleware/authenticate.middleware';
 import { validate } from '@/shared/middleware/validate.middleware';
 import {
   CreateEvaluationSchema,
@@ -10,14 +11,16 @@ import {
 const router = Router();
 
 /**
- * Evaluation Routes
+ * Evaluation Routes — all protected by JWT
  *
- * GET    /api/v1/evaluations         → List all (with pagination + filter)
- * POST   /api/v1/evaluations         → Create new evaluation
- * GET    /api/v1/evaluations/:id     → Get single evaluation
- * PATCH  /api/v1/evaluations/:id     → Update evaluation
- * DELETE /api/v1/evaluations/:id     → Delete evaluation
+ * GET    /api/v1/evaluations       → List user's evaluations (paginated + filter)
+ * POST   /api/v1/evaluations       → Create new evaluation
+ * GET    /api/v1/evaluations/:id   → Get single evaluation
+ * PATCH  /api/v1/evaluations/:id   → Update evaluation
+ * DELETE /api/v1/evaluations/:id   → Delete evaluation
  */
+router.use(authenticate);
+
 router.get(
   '/',
   validate(GetEvaluationsQuerySchema, 'query'),
@@ -30,10 +33,7 @@ router.post(
   evaluationController.create.bind(evaluationController),
 );
 
-router.get(
-  '/:id',
-  evaluationController.findById.bind(evaluationController),
-);
+router.get('/:id', evaluationController.findById.bind(evaluationController));
 
 router.patch(
   '/:id',
@@ -41,9 +41,6 @@ router.patch(
   evaluationController.update.bind(evaluationController),
 );
 
-router.delete(
-  '/:id',
-  evaluationController.delete.bind(evaluationController),
-);
+router.delete('/:id', evaluationController.delete.bind(evaluationController));
 
 export { router as evaluationRoutes };

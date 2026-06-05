@@ -17,6 +17,17 @@ export const UxAnalysisInputSchema = z.object({
   domSnapshot: z.string(),       // Serialized DOM structure extracted by Playwright
   screenshots: z.array(z.string()).optional(), // Base64 encoded screenshots
   evaluationContext: z.string().optional(),    // Optional instructions from evaluator
+  evaluatorProfile: z.object({
+    fullName: z.string(),
+    phrase: z.string(),
+    age: z.number(),
+    profession: z.string(),
+    archetype: z.string(),
+    techSavviness: z.string(),
+    accessibilityNeeds: z.array(z.string()),
+    goals: z.array(z.string()),
+    frustrations: z.array(z.string()),
+  }),
 });
 
 export type UxAnalysisInput = z.infer<typeof UxAnalysisInputSchema>;
@@ -36,9 +47,9 @@ export const UxFindingSchema = z.object({
   ]),
   title: z.string(),
   description: z.string(),
-  affectedElement: z.string().optional(),
+  affectedElement: z.string().nullish(),
   recommendation: z.string(),
-  wcagCriteria: z.string().optional(),
+  wcagCriteria: z.string().nullish(),
 });
 
 export const UxAnalysisOutputSchema = z.object({

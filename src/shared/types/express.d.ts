@@ -1,19 +1,17 @@
-import { Request } from 'express';
+import 'express';
 
 /**
- * Augment Express Request with EvalUXIA-specific properties.
- * Add authenticated user context here once auth is implemented.
+ * Extends Express Request with EvalUXIA-specific properties.
+ * req.user is populated by authenticate.middleware after JWT verification.
  */
 declare global {
   namespace Express {
     interface Request {
-      // Will be populated by auth middleware
       user?: {
-        id: string;
+        userId: string;
         email: string;
-        role: 'admin' | 'evaluator' | 'viewer';
+        role: string;
       };
-      // Evaluation session context (set by evaluation middleware)
       evaluationId?: string;
     }
   }

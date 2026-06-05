@@ -6,11 +6,13 @@ import { EVALUATION_STATUS, EvaluationStatus } from '@/config/constants';
  */
 export interface IEvaluation extends Document {
   userId: Types.ObjectId;
-  archetypeId: Types.ObjectId;
-  type: string; // 'prototype' | 'website'
+  evaluatorProfileId: Types.ObjectId;
+  title: string;
+  description?: string;
+  type: 'prototype' | 'website';
   url: string;
   status: EvaluationStatus;
-  
+
   // JSON Contract Mapping
   flowDefinition: {
     flowDescription: string;
@@ -22,15 +24,17 @@ export interface IEvaluation extends Document {
     previousActions: Array<{ actionType: string; description: string; result: string }>;
     blockingError: string | null;
   };
-  
+
   createdAt: Date;
   updatedAt: Date;
 }
 
 const EvaluationSchema = new Schema<IEvaluation>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    archetypeId: { type: Schema.Types.ObjectId, ref: 'Archetype', required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    evaluatorProfileId: { type: Schema.Types.ObjectId, ref: 'EvaluatorProfile', required: true },
+    title: { type: String, required: true, trim: true, minlength: 3, maxlength: 200 },
+    description: { type: String, trim: true, maxlength: 1000 },
     type: { type: String, enum: ['prototype', 'website'], required: true },
     url: {
       type: String,
@@ -67,7 +71,6 @@ const EvaluationSchema = new Schema<IEvaluation>(
   },
 );
 
-// Index for efficient status-based queries
 EvaluationSchema.index({ status: 1 });
 EvaluationSchema.index({ createdAt: -1 });
 

@@ -1,11 +1,13 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
 /**
- * Archetype — Represents the User Persona/Archetype simulated by Gemini
- * during UX evaluations.
+ * EvaluatorProfile — Represents the User Persona/Archetype simulated by Gemini
+ * during UX and Accessibility evaluations.
  */
-export interface IArchetype extends Document {
+export interface IEvaluatorProfile extends Document {
   userId: Types.ObjectId;
+  
+  // Base Persona details
   fullName: string;
   phrase: string;
   age: number;
@@ -18,13 +20,20 @@ export interface IArchetype extends Document {
   personality: string;
   goals: string[];
   frustrations: string[];
+
+  // UX & Accessibility attributes
+  techSavviness: 'low' | 'medium' | 'high';
+  accessibilityNeeds: string[];
+  preferredDevice: 'desktop' | 'mobile' | 'tablet';
+
   createdAt: Date;
   updatedAt: Date;
 }
 
-const ArchetypeSchema = new Schema<IArchetype>(
+const EvaluatorProfileSchema = new Schema<IEvaluatorProfile>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    
     fullName: { type: String, required: true },
     phrase: { type: String, required: true },
     age: { type: Number, required: true, min: 0 },
@@ -37,6 +46,20 @@ const ArchetypeSchema = new Schema<IArchetype>(
     personality: { type: String, required: true },
     goals: [{ type: String }],
     frustrations: [{ type: String }],
+
+    techSavviness: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      required: true,
+      default: 'medium'
+    },
+    accessibilityNeeds: [{ type: String }],
+    preferredDevice: {
+      type: String,
+      enum: ['desktop', 'mobile', 'tablet'],
+      required: true,
+      default: 'desktop'
+    }
   },
   {
     timestamps: true,
@@ -46,4 +69,4 @@ const ArchetypeSchema = new Schema<IArchetype>(
   },
 );
 
-export const Archetype = model<IArchetype>('Archetype', ArchetypeSchema);
+export const EvaluatorProfile = model<IEvaluatorProfile>('EvaluatorProfile', EvaluatorProfileSchema);

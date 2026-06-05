@@ -15,6 +15,7 @@ export interface IReport extends Document {
   highCount: number;
   mediumCount: number;
   lowCount: number;
+  infoCount: number;
   overallScore?: number;
   generatedAt?: Date;
   createdAt: Date;
@@ -34,6 +35,7 @@ const ReportSchema = new Schema<IReport>(
     highCount: { type: Number, default: 0 },
     mediumCount: { type: Number, default: 0 },
     lowCount: { type: Number, default: 0 },
+    infoCount: { type: Number, default: 0 },
     overallScore: { type: Number, min: 0, max: 100 },
     generatedAt: { type: Date },
   },

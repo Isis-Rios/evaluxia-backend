@@ -8,12 +8,11 @@ import { API_PREFIX, APP_NAME, APP_VERSION } from '@/config/constants';
 import { env } from '@/config/env';
 
 // Module routes
-import { evaluationRoutes } from '@/modules/evaluations/evaluation.routes';
-import { aiRoutes } from '@/modules/ai/ai.controller';
-import { automationRoutes } from '@/modules/automation/automation.controller';
 import { authRoutes } from '@/modules/auth/auth.routes';
+import { userRoutes } from '@/modules/users/user.routes';
+import { evaluatorProfileRoutes } from '@/modules/evaluator-profiles/evaluator-profile.routes';
+import { evaluationRoutes } from '@/modules/evaluations/evaluation.routes';
 import { findingsRoutes } from '@/modules/findings/findings.routes';
-import { reportsRoutes } from '@/modules/reports/reports.routes';
 
 /**
  * createApp — Configures and returns the Express application.
@@ -51,12 +50,11 @@ export function createApp(): Application {
   });
 
   // ─── API Routes ──────────────────────────────────────────────────────────────
-  app.use(`${API_PREFIX}/evaluations`, evaluationRoutes);
-  app.use(`${API_PREFIX}/ai`, aiRoutes);
-  app.use(`${API_PREFIX}/automation`, automationRoutes);
   app.use(`${API_PREFIX}/auth`, authRoutes);
+  app.use(`${API_PREFIX}/users`, userRoutes);
+  app.use(`${API_PREFIX}/evaluator-profiles`, evaluatorProfileRoutes);
+  app.use(`${API_PREFIX}/evaluations`, evaluationRoutes);
   app.use(`${API_PREFIX}/findings`, findingsRoutes);
-  app.use(`${API_PREFIX}/reports`, reportsRoutes);
 
   // ─── 404 Handler ─────────────────────────────────────────────────────────────
   app.use((_req: Request, res: Response) => {

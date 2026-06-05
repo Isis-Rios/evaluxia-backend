@@ -1,7 +1,7 @@
 import { Schema, model, Document, Types } from 'mongoose';
 
 export type FindingGroup = 'ux' | 'accessibility';
-export type FindingSeverity = 'high' | 'medium' | 'low';
+export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 /**
  * Finding — Unifies UX and Accessibility findings returned by Gemini.
@@ -31,7 +31,7 @@ const FindingSchema = new Schema<IFinding>(
     iteration: { type: Number, required: true, min: 1 },
     findingGroup: { type: String, enum: ['ux', 'accessibility'], required: true },
     type: { type: String },
-    severity: { type: String, enum: ['high', 'medium', 'low'], required: true },
+    severity: { type: String, enum: ['critical', 'high', 'medium', 'low', 'info'], required: true },
     description: { type: String, required: true },
     
     // UX Specific

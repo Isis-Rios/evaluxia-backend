@@ -1,24 +1,49 @@
 import { Router } from 'express';
-
-/**
- * Findings Module — Placeholder
- *
- * Future implementation:
- * - GET    /findings                    → List all findings (filter by evaluation, severity, category)
- * - POST   /findings                    → Create finding manually
- * - GET    /findings/:id                → Get single finding
- * - PATCH  /findings/:id               → Update finding (e.g. mark as resolved)
- * - DELETE /findings/:id               → Delete finding
- * - GET    /findings/evaluation/:evalId → All findings for a specific evaluation
- *
- * Findings are typically auto-created by the AI analysis pipeline,
- * but can also be created manually by human evaluators.
- */
+import { findingController } from './finding.controller';
+import { authenticate } from '@/shared/middleware/authenticate.middleware';
+import { validate } from '@/shared/middleware/validate.middleware';
+import {
+  CreateFindingSchema,
+  UpdateFindingSchema,
+  GetFindingsQuerySchema,
+} from './dto/finding.dto';
 
 const router = Router();
 
-router.get('/status', (_req, res) => {
-  res.status(200).json({ status: 'success', message: 'Findings module ready — not yet implemented' });
-});
+/**
+ * Finding Routes — all protected by JWT
+ *
+ * GET    /api/v1/findings                         → List findings (filter by evaluationId, severity, group)
+ * POST   /api/v1/findings                         → Create a finding manually
+ * GET    /api/v1/findings/:id                     → Get single finding
+ * PATCH  /api/v1/findings/:id                     → Update finding
+ * DELETE /api/v1/findings/:id                     → Delete finding
+ * GET    /api/v1/findings/evaluation/:evaluationId → All findings for an evaluation
+ */
+router.use(authenticate);
+
+router.get(
+  '/',
+  validate(GetFindingsQuerySchema, 'query'),
+  findingController.findAll.bind(findingController),
+);
+
+router.post('/', validate(CreateFindingSchema), findingController.create.bind(findingController));
+
+// Specific route before :id to avoid conflict
+router.get(
+  '/evaluation/:evaluationId',
+  findingController.findByEvaluationId.bind(findingController),
+);
+
+router.get('/:id', findingController.findById.bind(findingController));
+
+router.patch(
+  '/:id',
+  validate(UpdateFindingSchema),
+  findingController.update.bind(findingController),
+);
+
+router.delete('/:id', findingController.delete.bind(findingController));
 
 export { router as findingsRoutes };
