@@ -29,7 +29,7 @@ export class EvaluationController {
   async create(req: Request, res: Response): Promise<void> {
     const dto = req.body as CreateEvaluationDto;
     const evaluation = await evaluationService.create(req.user!.userId, dto);
-    res.status(201).json({ status: 'success', data: evaluation });
+    res.status(202).json({ status: 'success', data: evaluation });
   }
 
   async update(req: Request, res: Response): Promise<void> {
