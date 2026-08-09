@@ -29,7 +29,15 @@ export function validate(
     }
 
     // Attach validated + coerced data back to request
-    req[target] = result.data;
+    if (target === 'body') {
+      req.body = result.data;
+    } else {
+      // req.query and req.params are getters in Express, mutating their content is safer
+      for (const key in req[target]) {
+        delete req[target][key];
+      }
+      Object.assign(req[target], result.data);
+    }
     next();
   };
 }

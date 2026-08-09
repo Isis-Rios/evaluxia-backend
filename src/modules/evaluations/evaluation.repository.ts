@@ -23,6 +23,11 @@ export class EvaluationRepository {
     return { data, total };
   }
 
+  async findById(id: string): Promise<IEvaluation | null> {
+    if (!Types.ObjectId.isValid(id)) return null;
+    return Evaluation.findById(id);
+  }
+
   async findByIdAndUserId(id: string, userId: string): Promise<IEvaluation | null> {
     if (!Types.ObjectId.isValid(id)) return null;
     return Evaluation.findOne({ _id: id, userId });

@@ -1,26 +1,30 @@
 import { Router } from 'express';
-
-/**
- * Reports Module — Placeholder
- *
- * Future implementation:
- * - POST /reports/generate/:evaluationId → Trigger report generation (async)
- * - GET  /reports/:id                    → Get report metadata
- * - GET  /reports/:id/download           → Download report file (JSON/HTML/PDF)
- * - GET  /reports/evaluation/:evalId     → All reports for an evaluation
- *
- * Report generation pipeline:
- *   1. Aggregate all findings for the evaluation
- *   2. Call Gemini for executive summary generation
- *   3. Compile findings + scores + recommendations
- *   4. Render to requested format (json/html/pdf)
- *   5. Store file path + update report status → 'ready'
- */
+import { reportService } from './report.service';
+import { authenticate } from '@/shared/middleware/authenticate.middleware';
 
 const router = Router();
 
-router.get('/status', (_req, res) => {
-  res.status(200).json({ status: 'success', message: 'Reports module ready — not yet implemented' });
+/**
+ * GET /api/v1/reports/evaluation/:evaluationId
+ * Retorna el reporte consolidado de una evaluación incluyendo las métricas reales de tokens y costos.
+ */
+router.get('/evaluation/:evaluationId', authenticate, async (req, res, next) => {
+  try {
+    const evaluationId = req.params.evaluationId as string;
+    const report = await reportService.getReportForEvaluation(evaluationId);
+    res.status(200).json({ status: 'success', data: report });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/v1/reports/metrics/cumulative
+ * Retorna el panel de métricas acumuladas del backend (costos en USD, tokens de entrada/salida y llamadas).
+ */
+router.get('/metrics/cumulative', authenticate, (_req, res) => {
+  const metrics = reportService.getCumulativeMetrics();
+  res.status(200).json({ status: 'success', data: metrics });
 });
 
 export { router as reportsRoutes };

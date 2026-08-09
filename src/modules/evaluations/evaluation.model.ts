@@ -1,5 +1,10 @@
 import { Schema, model, Document, Types } from 'mongoose';
-import { EVALUATION_STATUS, EvaluationStatus } from '@/config/constants';
+import {
+  EVALUATION_STATUS,
+  EvaluationStatus,
+  AUDIT_STATUS,
+  AuditStatus,
+} from '@/config/constants';
 
 /**
  * Evaluation — Core entity representing a UX evaluation session (State Machine).
@@ -12,6 +17,7 @@ export interface IEvaluation extends Document {
   type: 'prototype' | 'website';
   url: string;
   status: EvaluationStatus;
+  auditStatus: AuditStatus;
 
   // JSON Contract Mapping
   flowDefinition: {
@@ -46,6 +52,11 @@ const EvaluationSchema = new Schema<IEvaluation>(
       enum: Object.values(EVALUATION_STATUS),
       default: EVALUATION_STATUS.PENDING,
     },
+    auditStatus: {
+      type: String,
+      enum: Object.values(AUDIT_STATUS),
+      default: AUDIT_STATUS.PENDING,
+    },
     flowDefinition: {
       flowDescription: { type: String },
       totalStepsEstimated: { type: Number },
@@ -72,6 +83,7 @@ const EvaluationSchema = new Schema<IEvaluation>(
 );
 
 EvaluationSchema.index({ status: 1 });
+EvaluationSchema.index({ auditStatus: 1 });
 EvaluationSchema.index({ createdAt: -1 });
 
 export const Evaluation = model<IEvaluation>('Evaluation', EvaluationSchema);

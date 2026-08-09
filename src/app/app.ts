@@ -1,6 +1,7 @@
 import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import path from 'path';
 
 import { loggerMiddleware } from '@/shared/middleware/logger.middleware';
 import { errorMiddleware } from '@/shared/middleware/error.middleware';
@@ -13,6 +14,8 @@ import { userRoutes } from '@/modules/users/user.routes';
 import { evaluatorProfileRoutes } from '@/modules/evaluator-profiles/evaluator-profile.routes';
 import { evaluationRoutes } from '@/modules/evaluations/evaluation.routes';
 import { findingsRoutes } from '@/modules/findings/findings.routes';
+import { automationRoutes } from '@/modules/automation/automation.controller';
+import { aiRoutes } from '@/modules/ai/ai.controller';
 
 /**
  * createApp — Configures and returns the Express application.
@@ -20,6 +23,9 @@ import { findingsRoutes } from '@/modules/findings/findings.routes';
  */
 export function createApp(): Application {
   const app = express();
+
+  // Serve screenshots as static assets
+  app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // ─── Security Middleware ─────────────────────────────────────────────────────
   app.use(helmet());
@@ -55,6 +61,8 @@ export function createApp(): Application {
   app.use(`${API_PREFIX}/evaluator-profiles`, evaluatorProfileRoutes);
   app.use(`${API_PREFIX}/evaluations`, evaluationRoutes);
   app.use(`${API_PREFIX}/findings`, findingsRoutes);
+  app.use(`${API_PREFIX}/automation`, automationRoutes);
+  app.use(`${API_PREFIX}/ai`, aiRoutes);
 
   // ─── 404 Handler ─────────────────────────────────────────────────────────────
   app.use((_req: Request, res: Response) => {

@@ -1,4 +1,5 @@
 import { Schema, model, Document } from 'mongoose';
+import { EvaluationMetrics } from '@/shared/infrastructure/metrics-tracker';
 
 export type ReportFormat = 'json' | 'html' | 'pdf';
 export type ReportStatus = 'generating' | 'ready' | 'failed';
@@ -17,6 +18,7 @@ export interface IReport extends Document {
   lowCount: number;
   infoCount: number;
   overallScore?: number;
+  metrics?: EvaluationMetrics;
   generatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -37,6 +39,7 @@ const ReportSchema = new Schema<IReport>(
     lowCount: { type: Number, default: 0 },
     infoCount: { type: Number, default: 0 },
     overallScore: { type: Number, min: 0, max: 100 },
+    metrics: { type: Schema.Types.Mixed, default: null },
     generatedAt: { type: Date },
   },
   {

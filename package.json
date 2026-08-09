@@ -8,7 +8,7 @@
     "build": "tsc --project tsconfig.json",
     "start": "node dist/app/server.js",
     "lint": "tsc --noEmit",
-    "test": "echo \"Tests coming soon\" && exit 0"
+    "test": "ts-node -r tsconfig-paths/register src/modules/ai/tests/contracts.test.ts"
   },
   "keywords": [
     "ux",

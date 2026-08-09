@@ -33,6 +33,14 @@ export class EvaluatorProfileController {
     res.status(200).json({ status: 'success', data: profile });
   }
 
+  async activate(req: Request, res: Response): Promise<void> {
+    const profile = await evaluatorProfileService.activateProfile(
+      req.user!.userId,
+      req.params['id'] as string,
+    );
+    res.status(200).json({ status: 'success', data: profile });
+  }
+
   async delete(req: Request, res: Response): Promise<void> {
     await evaluatorProfileService.delete(req.user!.userId, req.params['id'] as string);
     res.status(204).send();

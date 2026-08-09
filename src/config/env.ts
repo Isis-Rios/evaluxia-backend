@@ -23,7 +23,7 @@ const envSchema = z.object({
 
   // Gemini AI (optional in this iteration)
   GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-2.0-flash'),
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
 
   // CORS
   CORS_ORIGIN: z.string().default('*'),

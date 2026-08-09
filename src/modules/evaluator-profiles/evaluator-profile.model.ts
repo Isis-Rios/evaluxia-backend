@@ -25,6 +25,7 @@ export interface IEvaluatorProfile extends Document {
   techSavviness: 'low' | 'medium' | 'high';
   accessibilityNeeds: string[];
   preferredDevice: 'desktop' | 'mobile' | 'tablet';
+  isActive: boolean;
 
   createdAt: Date;
   updatedAt: Date;
@@ -59,7 +60,8 @@ const EvaluatorProfileSchema = new Schema<IEvaluatorProfile>(
       enum: ['desktop', 'mobile', 'tablet'],
       required: true,
       default: 'desktop'
-    }
+    },
+    isActive: { type: Boolean, default: false }
   },
   {
     timestamps: true,

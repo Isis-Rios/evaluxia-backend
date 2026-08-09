@@ -14,20 +14,25 @@ const SnapshotSchema = z.object({
 export class AutomationController {
   async navigate(req: Request, res: Response, _next: NextFunction): Promise<void> {
     const { url } = req.body as { url: string };
-    const result = await automationService.navigate(url);
+    const result = await automationService.startSession('transient-test-navigate', url);
+    await automationService.closeSession('transient-test-navigate');
     res.status(200).json({ status: 'success', data: result });
   }
 
   async extractSnapshot(req: Request, res: Response, _next: NextFunction): Promise<void> {
     const { url } = req.body as { url: string };
-    const snapshot = await automationService.extractSnapshot(url);
+    await automationService.startSession('transient-test-snapshot', url);
+    const snapshot = await automationService.extractCurrentSnapshot('transient-test-snapshot');
+    await automationService.closeSession('transient-test-snapshot');
     res.status(200).json({ status: 'success', data: snapshot });
   }
 
   async captureScreenshot(req: Request, res: Response, _next: NextFunction): Promise<void> {
     const { url } = req.body as { url: string };
-    const base64 = await automationService.captureScreenshot(url);
-    res.status(200).json({ status: 'success', data: { screenshot: base64 } });
+    await automationService.startSession('transient-test-screenshot', url);
+    const filepath = await automationService.captureAndSaveScreenshot('transient-test-screenshot', 1);
+    await automationService.closeSession('transient-test-screenshot');
+    res.status(200).json({ status: 'success', data: { screenshot: filepath } });
   }
 }
 

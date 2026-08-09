@@ -6,7 +6,7 @@ export const APP_VERSION = '1.0.0';
 
 export const API_PREFIX = '/api/v1';
 
-// Evaluation statuses
+// Evaluation statuses (Phase 1 Exploration)
 export const EVALUATION_STATUS = {
   PENDING: 'pending',
   RUNNING: 'running',
@@ -15,6 +15,16 @@ export const EVALUATION_STATUS = {
 } as const;
 
 export type EvaluationStatus = (typeof EVALUATION_STATUS)[keyof typeof EVALUATION_STATUS];
+
+// Audit statuses (Phase 2 Specialized Audit)
+export const AUDIT_STATUS = {
+  PENDING: 'pending',
+  RUNNING: 'running',
+  COMPLETED: 'completed',
+  FAILED: 'failed',
+} as const;
+
+export type AuditStatus = (typeof AUDIT_STATUS)[keyof typeof AUDIT_STATUS];
 
 // AI contract types
 export const AI_CONTRACT_TYPE = {

@@ -1,6 +1,6 @@
 import { EvaluatorProfile, IEvaluatorProfile } from './evaluator-profile.model';
 import { Types } from 'mongoose';
-import { CreateEvaluatorProfileDto, UpdateEvaluatorProfileDto, GetEvaluatorProfilesQuery } from './dto/evaluator-profile.dto';
+import { CreateEvaluatorProfileDto, GetEvaluatorProfilesQuery } from './dto/evaluator-profile.dto';
 
 export class EvaluatorProfileRepository {
   async findAll(
@@ -23,14 +23,26 @@ export class EvaluatorProfileRepository {
     return EvaluatorProfile.findOne({ _id: id, userId });
   }
 
-  async create(userId: string, dto: CreateEvaluatorProfileDto): Promise<IEvaluatorProfile> {
-    return EvaluatorProfile.create({ ...dto, userId });
+  async create(userId: string, dto: CreateEvaluatorProfileDto, isActive: boolean = false): Promise<IEvaluatorProfile> {
+    return EvaluatorProfile.create({ ...dto, userId, isActive });
+  }
+
+  async countByUser(userId: string): Promise<number> {
+    return EvaluatorProfile.countDocuments({ userId });
+  }
+
+  async findActiveByUser(userId: string): Promise<IEvaluatorProfile | null> {
+    return EvaluatorProfile.findOne({ userId, isActive: true });
+  }
+
+  async deactivateAllForUser(userId: string): Promise<void> {
+    await EvaluatorProfile.updateMany({ userId }, { isActive: false });
   }
 
   async update(
     id: string,
     userId: string,
-    dto: UpdateEvaluatorProfileDto,
+    dto: Partial<IEvaluatorProfile> | Record<string, any>,
   ): Promise<IEvaluatorProfile | null> {
     if (!Types.ObjectId.isValid(id)) return null;
     return EvaluatorProfile.findOneAndUpdate({ _id: id, userId }, dto, {

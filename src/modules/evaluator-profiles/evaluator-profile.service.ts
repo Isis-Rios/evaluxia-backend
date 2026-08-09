@@ -21,7 +21,23 @@ export class EvaluatorProfileService {
   }
 
   async create(userId: string, dto: CreateEvaluatorProfileDto): Promise<IEvaluatorProfile> {
-    return evaluatorProfileRepository.create(userId, dto);
+    const count = await evaluatorProfileRepository.countByUser(userId);
+    const isActive = count === 0;
+    return evaluatorProfileRepository.create(userId, dto, isActive);
+  }
+
+  async activateProfile(userId: string, profileId: string): Promise<IEvaluatorProfile> {
+    // 1. Verify ownership (throws 404 if not found/owned)
+    await this.findById(userId, profileId);
+
+    // 2. Deactivate all profiles for this user
+    await evaluatorProfileRepository.deactivateAllForUser(userId);
+
+    // 3. Mark the selected profile as active
+    const activated = await evaluatorProfileRepository.update(profileId, userId, { isActive: true });
+    
+    // In theory 'activated' is never null here since we just found it
+    return activated!;
   }
 
   async update(
