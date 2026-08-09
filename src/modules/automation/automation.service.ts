@@ -3,6 +3,16 @@ import { AppError } from '@/shared/errors/AppError';
 import { Page } from 'playwright';
 import fs from 'fs';
 import path from 'path';
+import {
+  HeadingEvidence,
+  ImageEvidence,
+  LinkEvidence,
+  ButtonEvidence,
+  FormEvidence,
+  FormElementEvidence,
+  LandmarkEvidence,
+  ComputedStyleEvidence,
+} from '@/modules/snapshots/snapshot-evidence.model';
 
 export interface InteractiveElement {
   type: 'button' | 'input' | 'link' | 'select' | 'checkbox' | 'radio' | 'textarea' | 'image' | 'other';
@@ -18,9 +28,13 @@ export interface PageSnapshot {
   title: string;
   domSnapshot: string;
   metaDescription?: string;
-  headings: { level: number; text: string }[];
-  images: { src: string; alt: string }[];
-  links: { href: string; text: string; isExternal: boolean }[];
+  headings: HeadingEvidence[];
+  images: ImageEvidence[];
+  links: LinkEvidence[];
+  buttons: ButtonEvidence[];
+  forms: FormEvidence[];
+  landmarks: LandmarkEvidence[];
+  computedStyles: ComputedStyleEvidence[];
   accessibilityTree?: string;
   visibleDOMSummary?: InteractiveElement[];
 }
@@ -97,7 +111,24 @@ export class AutomationService {
       const snapshot = await page.evaluate((): Omit<PageSnapshot, 'accessibilityTree'> => {
         const getText = (el: Element) => el.textContent?.trim() ?? '';
 
-        // Helper to extract interactive elements for visibleDOMSummary
+        const getCssSelector = (el: Element): string => {
+          if (el.id) return `#${el.id}`;
+          const ariaLabel = el.getAttribute('aria-label');
+          if (ariaLabel) return `[aria-label="${ariaLabel.replace(/"/g, '\\"')}"]`;
+          const name = el.getAttribute('name');
+          if (name) return `[name="${name.replace(/"/g, '\\"')}"]`;
+          const tag = el.tagName.toLowerCase();
+          const parent = el.parentElement;
+          if (!parent) return tag;
+          const siblings = Array.from(parent.children).filter((c) => c.tagName === el.tagName);
+          if (siblings.length > 1) {
+            const index = siblings.indexOf(el) + 1;
+            return `${tag}:nth-of-type(${index})`;
+          }
+          return tag;
+        };
+
+        // Helper to extract interactive elements for visibleDOMSummary (Preserved 100% for Phase 1)
         const getInteractiveElements = (): InteractiveElement[] => {
           const elements = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"]'));
           
@@ -143,30 +174,137 @@ export class AutomationService {
           });
         };
 
+        // 1. Headings
+        const headings: HeadingEvidence[] = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((h) => ({
+          level: parseInt(h.tagName[1] as string, 10),
+          text: getText(h),
+          selector: getCssSelector(h),
+        }));
+
+        // 2. Images
+        const images: ImageEvidence[] = Array.from(document.querySelectorAll('img')).map((img) => {
+          const altAttr = img.getAttribute('alt');
+          const isDecorative = altAttr === '' || img.getAttribute('role') === 'presentation' || img.getAttribute('aria-hidden') === 'true';
+          return {
+            selector: getCssSelector(img),
+            src: img.src || '',
+            alt: altAttr !== null ? altAttr : null,
+            ariaLabel: img.getAttribute('aria-label'),
+            role: img.getAttribute('role'),
+            isDecorative,
+          };
+        });
+
+        // 3. Links
+        const links: LinkEvidence[] = Array.from(document.querySelectorAll('a[href]')).map((a) => ({
+          selector: getCssSelector(a),
+          text: getText(a),
+          href: (a as HTMLAnchorElement).href || '',
+          ariaLabel: a.getAttribute('aria-label'),
+          role: a.getAttribute('role'),
+          isExternal: (a as HTMLAnchorElement).hostname !== window.location.hostname,
+        }));
+
+        // 4. Buttons
+        const buttons: ButtonEvidence[] = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]')).map((btn) => {
+          const className = btn.className.toLowerCase();
+          const typeAttr = btn.getAttribute('type');
+          const isPrimary = className.includes('primary') || className.includes('btn-primary') || typeAttr === 'submit' || btn.getAttribute('aria-primary') === 'true';
+          return {
+            selector: getCssSelector(btn),
+            tag: btn.tagName.toLowerCase(),
+            text: getText(btn) || btn.getAttribute('value') || null,
+            ariaLabel: btn.getAttribute('aria-label'),
+            role: btn.getAttribute('role'),
+            isDisabled: btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true',
+            isPrimary,
+          };
+        });
+
+        // 5. Forms
+        const forms: FormEvidence[] = Array.from(document.querySelectorAll('form')).map((form) => {
+          const elements: FormElementEvidence[] = Array.from(form.querySelectorAll('input, select, textarea, button')).map((el) => {
+            const inputType = el.getAttribute('type') || el.tagName.toLowerCase();
+            const nameAttr = el.getAttribute('name');
+            let labelText: string | null = null;
+            if (el.id) {
+              const labelEl = document.querySelector(`label[for="${el.id}"]`);
+              if (labelEl) labelText = getText(labelEl);
+            }
+            if (!labelText && el.parentElement?.tagName.toLowerCase() === 'label') {
+              labelText = getText(el.parentElement);
+            }
+
+            return {
+              selector: getCssSelector(el),
+              type: inputType,
+              name: nameAttr,
+              label: labelText,
+              ariaLabel: el.getAttribute('aria-label'),
+              ariaLabelledBy: el.getAttribute('aria-labelledby'),
+              ariaDescribedBy: el.getAttribute('aria-describedby'),
+              required: el.hasAttribute('required') || el.getAttribute('aria-required') === 'true',
+              placeholder: el.getAttribute('placeholder'),
+              ariaInvalid: el.getAttribute('aria-invalid') === 'true',
+            };
+          });
+
+          return {
+            selector: getCssSelector(form),
+            name: form.getAttribute('name'),
+            action: form.getAttribute('action'),
+            elements,
+          };
+        });
+
+        // 6. Landmarks
+        const landmarkSelectors = 'header, nav, main, aside, footer, form, [role="banner"], [role="navigation"], [role="main"], [role="contentinfo"]';
+        const landmarks: LandmarkEvidence[] = Array.from(document.querySelectorAll(landmarkSelectors)).map((lm) => {
+          let type = lm.tagName.toLowerCase();
+          const role = lm.getAttribute('role');
+          if (role) type = role;
+          return {
+            type,
+            selector: getCssSelector(lm),
+            ariaLabel: lm.getAttribute('aria-label'),
+          };
+        });
+
+        // 7. Computed Styles (Limited to 50 key visual/text elements to prevent payload bloat)
+        const styleTargetElements = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, button, [role="button"], a[href], input, select, textarea, label, p')).slice(0, 50);
+        const computedStyles: ComputedStyleEvidence[] = styleTargetElements.map((el) => {
+          let style: CSSStyleDeclaration | null = null;
+          try {
+            style = window.getComputedStyle(el);
+          } catch (e) {
+            // Ignore
+          }
+          return {
+            selector: getCssSelector(el),
+            tag: el.tagName.toLowerCase(),
+            text: getText(el).slice(0, 80),
+            color: style?.color || '',
+            backgroundColor: style?.backgroundColor || '',
+            fontSize: style?.fontSize || '',
+            fontWeight: style?.fontWeight || '',
+            lineHeight: style?.lineHeight || '',
+            fontFamily: style?.fontFamily || '',
+          };
+        });
+
         return {
           url: window.location.href,
           title: document.title,
           domSnapshot: document.documentElement.outerHTML,
-          metaDescription:
-            document
-              .querySelector('meta[name="description"]')
-              ?.getAttribute('content') ?? undefined,
-          headings: Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6')).map(
-            (h) => ({
-              level: parseInt(h.tagName[1] as string),
-              text: getText(h),
-            }),
-          ),
-          images: Array.from(document.querySelectorAll('img')).map((img) => ({
-            src: img.src,
-            alt: img.alt,
-          })),
-          links: Array.from(document.querySelectorAll('a[href]')).map((a) => ({
-            href: (a as HTMLAnchorElement).href,
-            text: getText(a),
-            isExternal: (a as HTMLAnchorElement).hostname !== window.location.hostname,
-          })),
-          visibleDOMSummary: getInteractiveElements()
+          metaDescription: document.querySelector('meta[name="description"]')?.getAttribute('content') ?? undefined,
+          headings,
+          images,
+          links,
+          buttons,
+          forms,
+          landmarks,
+          computedStyles,
+          visibleDOMSummary: getInteractiveElements(),
         };
       });
 
@@ -223,110 +361,97 @@ export class AutomationService {
   }
 
   /**
-   * Executes a suggested action in the active session page.
+   * Executes a suggested browser action in the active session.
    */
   async executeAction(
     evaluationId: string,
-    actionType: string,
-    matchStrategy: string,
-    selectorValue: string,
-    actionData?: string
-  ): Promise<void> {
+    action: { actionType: string; selector?: string; value?: string; targetElement?: { matchStrategy?: string; value?: string } },
+  ): Promise<{ success: boolean; error?: string }> {
     const session = this.activeSessions.get(evaluationId);
     if (!session) {
       throw new AppError(`No active browser session found for evaluation ${evaluationId}`, 404);
     }
 
     const { page } = session;
-
-    // Resolve the selector based on matchStrategy
-    const selector = this.resolveSelector(matchStrategy, selectorValue);
-
-    console.log(`[AutomationService] Executing ${actionType} on selector: ${selector}`);
+    const targetSelector = action.selector || action.targetElement?.value;
 
     try {
-      switch (actionType.toUpperCase()) {
+      switch (action.actionType.toUpperCase()) {
         case 'CLICK':
-          await page.click(selector);
+          if (!targetSelector) throw new Error('CLICK action requires a selector');
+          await page.click(targetSelector, { timeout: 10000 });
           break;
+
         case 'TYPE':
-          await page.fill(selector, actionData ?? '');
+          if (!targetSelector) throw new Error('TYPE action requires a selector');
+          await page.fill(targetSelector, action.value || '', { timeout: 10000 });
           break;
-        case 'HOVER':
-          await page.hover(selector);
-          break;
-        case 'FOCUS':
-          await page.focus(selector);
-          break;
-        case 'CLEAR':
-          await page.fill(selector, '');
-          break;
-        case 'CHECK':
-          await page.check(selector);
-          break;
-        case 'UNCHECK':
-          await page.uncheck(selector);
-          break;
-        case 'WAIT_FOR_ELEMENT':
-          await page.waitForSelector(selector);
-          break;
-        case 'WAIT':
-          const ms = parseInt(selectorValue, 10) || 1000;
-          await page.waitForTimeout(ms);
-          break;
-        case 'NAVIGATE':
-          await page.goto(selectorValue, { waitUntil: 'networkidle' });
-          break;
+
         case 'SELECT':
-        case 'SELECT_OPTION':
-          await page.selectOption(selector, actionData || selectorValue);
+          if (!targetSelector) throw new Error('SELECT action requires a selector');
+          await page.selectOption(targetSelector, action.value || '', { timeout: 10000 });
           break;
+
+        case 'CHECK':
+          if (!targetSelector) throw new Error('CHECK action requires a selector');
+          await page.check(targetSelector, { timeout: 10000 });
+          break;
+
+        case 'UNCHECK':
+          if (!targetSelector) throw new Error('UNCHECK action requires a selector');
+          await page.uncheck(targetSelector, { timeout: 10000 });
+          break;
+
+        case 'HOVER':
+          if (!targetSelector) throw new Error('HOVER action requires a selector');
+          await page.hover(targetSelector, { timeout: 10000 });
+          break;
+
+        case 'FOCUS':
+          if (!targetSelector) throw new Error('FOCUS action requires a selector');
+          await page.focus(targetSelector, { timeout: 10000 });
+          break;
+
+        case 'CLEAR':
+          if (!targetSelector) throw new Error('CLEAR action requires a selector');
+          await page.fill(targetSelector, '', { timeout: 10000 });
+          break;
+
+        case 'NAVIGATE':
+          if (!action.value) throw new Error('NAVIGATE action requires a URL in value');
+          await page.goto(action.value, { waitUntil: 'networkidle', timeout: 30000 });
+          break;
+
+        case 'STOP_FLOW':
+          break;
+
         default:
-          throw new AppError(`Unsupported action type: ${actionType}`, 400);
+          throw new Error(`Unsupported action type: ${action.actionType}`);
       }
+
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+      return { success: true };
     } catch (error) {
-      throw new AppError(
-        `Failed to execute ${actionType} on element '${selectorValue}': ${error instanceof Error ? error.message : String(error)}`,
-        502,
-      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     }
   }
 
   /**
-   * Closes the active browser session and releases resources.
+   * Closes the active session for an evaluation.
    */
   async closeSession(evaluationId: string): Promise<void> {
     const session = this.activeSessions.get(evaluationId);
     if (session) {
-      console.log(`[AutomationService] Closing session for evaluation ${evaluationId}`);
-      await session.close();
-      this.activeSessions.delete(evaluationId);
-    }
-  }
-
-  /**
-   * Translates design match strategies into Playwright locator selectors.
-   */
-  private resolveSelector(matchStrategy: string, value: string): string {
-    switch (matchStrategy.toUpperCase()) {
-      case 'CSS':
-        return value;
-      case 'XPATH':
-        return `xpath=${value}`;
-      case 'TEXT':
-        return `text=${value}`;
-      case 'ROLE':
-        return `[role="${value}"]`;
-      case 'LABEL':
-        return `label=${value}`;
-      case 'PLACEHOLDER':
-        return `[placeholder="${value}"]`;
-      case 'ALT_TEXT':
-        return `img[alt="${value}"]`;
-      case 'TEST_ID':
-        return `[data-testid="${value}"]`;
-      default:
-        return value; // Fallback to raw string
+      try {
+        await session.close();
+      } catch (err) {
+        console.warn(`[AutomationService] Error closing session for ${evaluationId}:`, err);
+      } finally {
+        this.activeSessions.delete(evaluationId);
+      }
     }
   }
 }

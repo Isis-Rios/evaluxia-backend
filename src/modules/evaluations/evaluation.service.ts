@@ -19,6 +19,7 @@ import { contextBuilder } from './services/context-builder.service';
 import { ruleEngine } from './services/rule-engine.service';
 import { auditEngine } from './services/audit-engine.service';
 import { V2AIOutputDecision } from '@/modules/ai/contracts/ai.contracts';
+import { snapshotEvidenceService } from '@/modules/snapshots/snapshot-evidence.service';
 
 /**
  * EvaluationService — Business logic for evaluation lifecycle management.
@@ -108,6 +109,27 @@ export class EvaluationService {
 
         // 3.2. Guardar Captura de Pantalla Física (PNG)
         const screenshotUrl = await automationService.captureAndSaveScreenshot(evaluationId, currentIteration);
+
+        // 3.2.b. Guardar Snapshot Evidence
+        try {
+          await snapshotEvidenceService.saveEvidence({
+            evaluationId: evaluationId as any,
+            iteration: currentIteration,
+            url: snapshot.url,
+            timestamp: new Date(),
+            screenshotPath: screenshotUrl,
+            headings: snapshot.headings || [],
+            images: snapshot.images || [],
+            links: snapshot.links || [],
+            buttons: snapshot.buttons || [],
+            forms: snapshot.forms || [],
+            landmarks: snapshot.landmarks || [],
+            accessibilityTree: snapshot.accessibilityTree,
+            computedStyles: snapshot.computedStyles || [],
+          });
+        } catch (evErr) {
+          console.warn(`[EvaluationService] Could not save snapshot evidence for iteration ${currentIteration}:`, evErr);
+        }
 
         // 3.3. Construir Contexto Mínimo a través de ContextBuilder
         const context = contextBuilder.buildContext({
@@ -200,13 +222,12 @@ export class EvaluationService {
         if (decisionResult.flowControl.recommendedNextStep === 'executeSuggestedAction' && currentAction && currentAction.targetElement) {
           try {
             console.log(`[EvaluationService] Executing browser action: ${currentAction.actionType} on selector ${currentAction.targetElement.value}`);
-            await automationService.executeAction(
-              evaluationId,
-              currentAction.actionType,
-              currentAction.targetElement.matchStrategy,
-              currentAction.targetElement.value,
-              currentAction.inputData ?? '' // P-01 fix: pass AI-suggested text for TYPE actions
-            );
+            await automationService.executeAction(evaluationId, {
+              actionType: currentAction.actionType,
+              selector: currentAction.targetElement.value,
+              value: currentAction.inputData ?? '',
+              targetElement: currentAction.targetElement,
+            });
             
             // Log previous actions for next iteration
             previousActions.push({
