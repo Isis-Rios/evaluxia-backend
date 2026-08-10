@@ -105,6 +105,12 @@ export class EvaluationService {
         if (currentIteration === 1) {
           maxIterations = calculateDynamicMaxIterations(snapshot.visibleDOMSummary || []);
           console.log(`[EvaluationService] Calculated dynamic maxIterations: ${maxIterations} for evaluation ${evaluationId}`);
+          previousActions.push({
+            actionType: 'NAVIGATE',
+            description: `Navegar a ${snapshot.url}`,
+            result: 'success',
+          });
+          completedSteps.push('Navegar a la URL objetivo');
         }
 
         // 3.2. Guardar Captura de Pantalla Física (PNG)
