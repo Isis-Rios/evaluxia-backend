@@ -14,6 +14,8 @@ import { userRoutes } from '@/modules/users/user.routes';
 import { evaluatorProfileRoutes } from '@/modules/evaluator-profiles/evaluator-profile.routes';
 import { evaluationRoutes } from '@/modules/evaluations/evaluation.routes';
 import { findingsRoutes } from '@/modules/findings/findings.routes';
+import { reportsRoutes } from '@/modules/reports/reports.routes';
+import { snapshotsRoutes } from '@/modules/snapshots/snapshot.routes';
 import { automationRoutes } from '@/modules/automation/automation.controller';
 import { aiRoutes } from '@/modules/ai/ai.controller';
 
@@ -61,6 +63,8 @@ export function createApp(): Application {
   app.use(`${API_PREFIX}/evaluator-profiles`, evaluatorProfileRoutes);
   app.use(`${API_PREFIX}/evaluations`, evaluationRoutes);
   app.use(`${API_PREFIX}/findings`, findingsRoutes);
+  app.use(`${API_PREFIX}/reports`, reportsRoutes);
+  app.use(`${API_PREFIX}/snapshots`, snapshotsRoutes);
   app.use(`${API_PREFIX}/automation`, automationRoutes);
   app.use(`${API_PREFIX}/ai`, aiRoutes);
 
