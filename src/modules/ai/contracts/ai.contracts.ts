@@ -167,12 +167,13 @@ export const SuggestedActionSchema = z.object({
         'PLACEHOLDER',
         'ALT_TEXT',
         'TEST_ID',
-      ]),
-      value: z.string(),
+        'NONE',
+      ]).nullish().transform((v) => v || 'CSS'),
+      value: z.string().nullish().transform((v) => v || undefined),
     })
     .nullable(),
   // P-01 fix: text to type when actionType is TYPE or option value for SELECT.
-  inputData: z.string().optional(),
+  inputData: z.string().nullish().transform((v) => v || undefined),
   rationale: z.string(),
   confidence: z.enum(['low', 'medium', 'high']),
 }).nullable();
@@ -227,19 +228,86 @@ export const V2AIOutputDecisionSchema = z.object({
 export type V2AIOutputDecision = z.output<typeof V2AIOutputDecisionSchema>;
 
 // =============================================================================
-// ─── FASE 2 AUDIT SCHEMAS (Auditoría Asíncrona Especializada) ────────────────
+// ─── FASE 2 AUDIT SCHEMAS (Auditoría Asíncrona Especializada — Subetapa 3B) ──
 // =============================================================================
 
-export const V2AuditFindingSchema = z.object({
-  findingGroup: z.enum(['ux', 'accessibility']),
-  type: z.enum(['usability', 'content', 'interaction', 'visual', 'wcag']).nullish(),
-  severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).nullish().transform((s) => s || 'medium'),
-  heuristic: z.string().nullish(),
-  wcagCriterion: z.string().nullish(),
-  description: z.string(),
-  recommendation: z.string(),
-  affectedArchetypeTraits: z.array(z.string()).nullish(),
+export const TechnicalEvidenceItemSchema = z.object({
+  type: z.enum([
+    'DOM_ATTRIBUTE',
+    'COMPUTED_STYLE',
+    'ACCESSIBILITY_TREE',
+    'SCREENSHOT',
+    'INTERACTION',
+    'HEADING_STRUCTURE',
+  ]),
+  property: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+  value: z.union([z.string(), z.number(), z.boolean()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+  selector: z.string().optional(),
+  attribute: z.string().optional(),
+  measurement: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+  context: z.string().optional(),
+  relatedValue: z
+    .object({
+      property: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+      value: z.union([z.string(), z.number(), z.boolean()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+    })
+    .optional(),
 });
+
+export const AffectedElementSchema = z.object({
+  tag: z.string().optional(),
+  text: z.string().optional(),
+  selector: z.string().optional(),
+  role: z.string().optional(),
+  ariaLabel: z.string().optional(),
+  href: z.string().optional(),
+  id: z.string().optional(),
+  attributes: z.record(z.string(), z.string()).optional(),
+});
+
+export const V2AuditFindingSchema = z
+  .object({
+    findingGroup: z.enum(['ux', 'accessibility']),
+    type: z.enum(['usability', 'content', 'interaction', 'visual', 'wcag']).nullish(),
+    status: z.enum(['PASS', 'FAIL', 'NOT_EVALUABLE']).default('FAIL'),
+    severity: z.enum(['critical', 'high', 'medium', 'low', 'info']).default('medium'),
+    confidence: z.enum(['high', 'medium', 'low']).default('high'),
+    heuristicCode: z.string().nullish(),
+    heuristicName: z.string().nullish(),
+    heuristic: z.string().nullish(), // legacy field
+    wcagCriterion: z.string().nullish(),
+    description: z.string(),
+    evidence: z.array(TechnicalEvidenceItemSchema).default([]),
+    affectedElement: AffectedElementSchema.optional(),
+    impact: z.string().optional(),
+    recommendation: z.string().nullable().optional(),
+    screenshotUrl: z.string().optional(),
+    affectedArchetypeTraits: z.array(z.string()).nullish(),
+  })
+  .refine(
+    (data) => {
+      // Barrier: FAIL status requires non-empty evidence and non-empty recommendation
+      if (data.status === 'FAIL') {
+        if (!data.evidence || data.evidence.length === 0) return false;
+        if (!data.recommendation || data.recommendation.trim().length === 0) return false;
+      }
+      return true;
+    },
+    { message: 'FAIL findings require non-empty technical evidence and an actionable recommendation' },
+  )
+  .refine(
+    (data) => {
+      // Barrier: recommendation cannot be equal to heuristicCode, heuristicName or heuristic
+      if (data.recommendation) {
+        const rec = data.recommendation.trim();
+        if (data.heuristicCode && rec === data.heuristicCode.trim()) return false;
+        if (data.heuristicName && rec === data.heuristicName.trim()) return false;
+        if (data.heuristic && rec === data.heuristic.trim()) return false;
+      }
+      return true;
+    },
+    { message: 'Recommendation cannot be identical to heuristicCode or heuristicName' },
+  );
 
 export const V2AuditOutputSchema = z.object({
   overallScore: z.number().min(0).max(100),

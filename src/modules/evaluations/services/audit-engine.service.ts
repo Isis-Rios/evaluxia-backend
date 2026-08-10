@@ -6,6 +6,10 @@ import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.s
 import { aiService } from '@/modules/ai/ai.service';
 import { metricsTracker } from '@/shared/infrastructure/metrics-tracker';
 import { AUDIT_STATUS } from '@/config/constants';
+import { snapshotEvidenceService } from '@/modules/snapshots/snapshot-evidence.service';
+import { deterministicAnalyzer } from './deterministic-analyzer.service';
+import { evidenceGateService } from './evidence-gate.service';
+import { auditMetricsService, InputAuditFinding } from './audit-metrics.service';
 
 export interface Phase1MetricsInput {
   phase1Calls: number;
@@ -15,7 +19,7 @@ export interface Phase1MetricsInput {
 }
 
 /**
- * AuditEngine — Motor de Auditoría Asíncrona Especializada (Fase 2 de la Arquitectura V2).
+ * AuditEngine — Motor de Auditoría Asíncrona Especializada Basado en Evidencia (Fase 2 Subetapa 3D).
  */
 export class AuditEngine {
   private static instance: AuditEngine;
@@ -42,7 +46,7 @@ export class AuditEngine {
     let userIdStr = '';
 
     try {
-      // 1. Obtener la evaluación por id directo (lectura interna del sistema)
+      // 1. Obtener la evaluación por id directo
       const evaluationDoc = await evaluationRepository.findById(evaluationId);
       if (evaluationDoc) {
         userIdStr = evaluationDoc.userId.toString();
@@ -78,13 +82,34 @@ export class AuditEngine {
         }
       }
 
-      // 2. Obtener historial de interacciones y pasos ejecutados
+      // 2. Recuperar la secuencia completa de SnapshotEvidence de todas las iteraciones
+      const evidences = await snapshotEvidenceService.getEvidencesForEvaluation(evaluationId);
+      console.log(`[AuditEngine] 📦 Retrieved ${evidences.length} SnapshotEvidence records from DB for evaluation ${evaluationId}`);
+
+      // 3. Ejecutar Análisis Determinístico Programático (WCAG 1.4.3 Contraste, WCAG 1.1.1 Alt, Botones, Links, Headings)
+      const deterministicFindings = deterministicAnalyzer.analyzeSnapshots(evidences);
+      console.log(`[AuditEngine] ⚙️ Deterministic analysis completed: ${deterministicFindings.length} criteria evaluated.`);
+
+      // 4. Preparar el resumen de evidencias estructuradas para el prompt de Gemini
+      const evidencesSummary = evidences.map((ev) => ({
+        iteration: ev.iteration,
+        url: ev.url,
+        screenshotPath: ev.screenshotPath,
+        headings: ev.headings,
+        images: ev.images,
+        links: ev.links,
+        buttons: ev.buttons,
+        forms: ev.forms,
+        landmarks: ev.landmarks,
+        computedStyles: ev.computedStyles,
+      }));
+
       const interactions = await aiInteractionService.getInteractions(evaluationId);
       const completedSteps = evaluationDoc?.flowState?.completedSteps || [];
       const previousActions = evaluationDoc?.flowState?.previousActions || [];
 
-      // 3. Invocar el prompt especializado de Fase 2 en AiService
-      console.log(`[AuditEngine] 🤖 Invoking Phase 2 specialized audit prompt with Gemini...`);
+      // 5. Invocar el prompt de auditoría de Fase 2 en AiService enviando el paquete de evidencias
+      console.log(`[AuditEngine] 🤖 Invoking Phase 2 specialized evidence-based audit prompt with Gemini...`);
       const auditResult = await aiService.performAuditAnalysis({
         evaluationId,
         title: title || evaluationDoc?.title || 'Evaluación Web',
@@ -92,36 +117,90 @@ export class AuditEngine {
         archetype: profileData,
         completedSteps,
         previousActions,
-        snapshotsCount: interactions.length || 1,
+        snapshotsCount: evidences.length || interactions.length || 1,
+        evidencesSummary,
+        accessibilityTrees: evidences.map((e) => e.accessibilityTree).filter(Boolean) as string[],
       });
 
-      const { overallScore, executiveSummary, findings: aiAuditFindings } = auditResult.result;
+      const { executiveSummary, findings: rawAiAuditFindings } = auditResult.result;
 
-      // 4. Persistir los hallazgos de la auditoría en la base de datos
-      console.log(`[AuditEngine] 💾 Persisting ${aiAuditFindings.length} audit findings to DB...`);
-      for (const f of aiAuditFindings) {
-        await findingService.create({
-          evaluationId: evaluationId as any,
-          iteration: 1, // Phase 2 Audit step
+      // 6. Pasar los hallazgos de Gemini por la Barrera de Evidencia (Evidence Gate) para bloquear especulaciones
+      const validatedAiFindings = evidenceGateService.processAiFindings(rawAiAuditFindings);
+      console.log(`[AuditEngine] 🛡️ EvidenceGate processed AI findings: ${validatedAiFindings.length} valid findings.`);
+
+      // 7. Unificar todos los hallazgos en un arreglo para cálculo determinístico de métricas
+      const allRawFindings: InputAuditFinding[] = [
+        ...deterministicFindings.map((df) => ({
+          findingGroup: df.findingGroup,
+          type: df.type,
+          status: df.status,
+          severity: df.severity,
+          confidence: df.confidence,
+          description: df.description,
+          heuristicCode: df.heuristicCode,
+          heuristicName: df.heuristicName,
+          wcagCriterion: df.wcagCriterion,
+          evidence: df.evidence,
+          affectedElement: df.affectedElement,
+          impact: df.impact,
+          recommendation: df.recommendation,
+          iteration: df.iteration,
+          url: df.url,
+          screenshotUrl: df.screenshotUrl,
+        })),
+        ...validatedAiFindings.map((f) => ({
           findingGroup: f.findingGroup,
           type: f.type || 'usability',
+          status: f.status || 'FAIL',
           severity: f.severity as any,
+          confidence: f.confidence || 'high',
           description: f.description,
+          heuristicCode: f.heuristicCode || undefined,
+          heuristicName: f.heuristicName || undefined,
           heuristic: f.heuristic || undefined,
           wcagCriterion: f.wcagCriterion || undefined,
-        });
+          evidence: f.evidence || [],
+          affectedElement: f.affectedElement || undefined,
+          impact: f.impact || undefined,
+          recommendation: f.recommendation || undefined,
+          iteration: 1,
+          url: evaluationDoc?.url,
+          screenshotUrl: `/uploads/evaluation_${evaluationId}_step_1.png`,
+        })),
+      ];
+
+      // 8. Calcular Métricas Determinísticas en Backend mediante AuditMetricsService (Gemini score es 100% ignorado)
+      const metrics = auditMetricsService.calculateMetrics(allRawFindings);
+      console.log(
+        `[AuditEngine] 📊 Calculated Deterministic Backend Metrics: Score=${metrics.overallScore}, Nielsen Compliance=${metrics.nielsenMetrics.compliance}%, WCAG Compliance=${metrics.wcagMetrics.compliance}%, Audit Coverage=${metrics.auditCoverage}%`,
+      );
+
+      // 9. Persistir Hallazgos Consolidados (FAIL) en BD
+      for (const cf of metrics.consolidatedFindings) {
+        if (cf.status === 'FAIL') {
+          await findingService.create({
+            evaluationId: evaluationId as any,
+            iteration: cf.iteration,
+            findingGroup: cf.findingGroup,
+            type: cf.type,
+            status: cf.status,
+            severity: cf.severity as any,
+            confidence: cf.confidence,
+            description: cf.description,
+            heuristicCode: cf.heuristicCode,
+            heuristicName: cf.heuristicName,
+            heuristic: cf.heuristic,
+            wcagCriterion: cf.wcagCriterion,
+            evidence: cf.evidence,
+            affectedElement: cf.affectedElement,
+            impact: cf.impact,
+            recommendation: cf.recommendation,
+            screenshotUrl: cf.screenshotUrl,
+          });
+        }
       }
 
-      // 5. Recopilar todos los hallazgos persistidos para conteos de severidad
-      const allFindings = await findingService.findByEvaluationId(evaluationId);
-
-      const criticalCount = allFindings.filter((f) => f.severity === 'critical').length;
-      const highCount = allFindings.filter((f) => f.severity === 'high').length;
-      const mediumCount = allFindings.filter((f) => f.severity === 'medium').length;
-      const lowCount = allFindings.filter((f) => f.severity === 'low').length;
-      const infoCount = allFindings.filter((f) => f.severity === 'info').length;
-
-      // 6. Consolidar Métricas de Consumo de Tokens y Costos (Fase 1 + Fase 2)
+      // 10. Consolidar Métricas de Consumo de Tokens y Costos (Fase 1 + Fase 2)
       const p1Calls = phase1Metrics?.phase1Calls || 0;
       const p1Prompt = phase1Metrics?.phase1PromptTokens || 0;
       const p1Output = phase1Metrics?.phase1OutputTokens || 0;
@@ -141,20 +220,33 @@ export class AuditEngine {
         outputTokens: p1Output + p2Output,
       });
 
-      // 7. Crear/Actualizar el Reporte consolidado
+      // 11. Crear/Actualizar el Reporte consolidado con métricas determinísticas
       const report = await reportRepository.findByEvaluationId(evaluationId);
       const reportData = {
         evaluationId,
         title: `Reporte de Experiencia de Usuario y Accesibilidad: ${title}`,
         status: 'ready' as const,
         summary: executiveSummary,
-        totalFindings: allFindings.length,
-        criticalCount,
-        highCount,
-        mediumCount,
-        lowCount,
-        infoCount,
-        overallScore,
+        totalFindings: metrics.totalFindings,
+        criticalCount: metrics.criticalCount,
+        highCount: metrics.highCount,
+        mediumCount: metrics.mediumCount,
+        lowCount: metrics.lowCount,
+        infoCount: metrics.infoCount,
+        passCount: metrics.passCount,
+        failCount: metrics.failCount,
+        notEvaluableCount: metrics.notEvaluableCount,
+        nielsenCompliance: metrics.nielsenMetrics.compliance,
+        wcagCompliance: metrics.wcagMetrics.compliance,
+        auditCoverage: metrics.auditCoverage,
+        nielsenCoverage: metrics.nielsenMetrics.coverage,
+        wcagCoverage: metrics.wcagMetrics.coverage,
+        evaluatedCriteria: metrics.evaluatedCriteria,
+        totalCriteria: metrics.totalCriteria,
+        evidenceCount: metrics.evidenceCount,
+        screenshotsCount: evidences.filter((e) => Boolean(e.screenshotPath)).length || 1,
+        iterationsEvaluated: evidences.length || 1,
+        overallScore: metrics.overallScore,
         metrics: evaluationMetrics,
         generatedAt: new Date(),
       };
@@ -165,7 +257,7 @@ export class AuditEngine {
         await reportRepository.create(reportData as any);
       }
 
-      // 8. Marcar auditStatus = COMPLETED ÚNICAMENTE DESPUÉS de guardar findings y reporte (Cero Race Condition)
+      // 12. Marcar auditStatus = COMPLETED ÚNICAMENTE DESPUÉS de guardar hallazgos y reporte
       if (userIdStr) {
         await evaluationRepository.update(evaluationId, userIdStr, {
           auditStatus: AUDIT_STATUS.COMPLETED,
@@ -173,7 +265,7 @@ export class AuditEngine {
       }
 
       console.log(
-        `[AuditEngine] ✅ Phase 2 Async Audit completed for ${evaluationId}. Final Score: ${overallScore}/100 | Cost: $${evaluationMetrics.estimatedCostUsd} USD`,
+        `[AuditEngine] ✅ Phase 2 Async Audit completed for ${evaluationId}. Deterministic Score: ${metrics.overallScore}/100 | Coverage: ${metrics.auditCoverage}% | Cost: $${evaluationMetrics.estimatedCostUsd} USD`,
       );
     } catch (error) {
       console.error(`[AuditEngine] ❌ Phase 2 Async audit failed for evaluation ${evaluationId}:`, error);

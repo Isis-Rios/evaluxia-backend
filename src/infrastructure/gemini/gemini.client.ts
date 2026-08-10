@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
-import { ZodSchema } from 'zod';
+import { ZodType } from 'zod';
 import { env } from '@/config/env';
 import { AppError } from '@/shared/errors/AppError';
 import { TokenUsage } from '@/shared/infrastructure/metrics-tracker';
@@ -32,10 +32,10 @@ export class GeminiClient {
    * Sends a prompt to Gemini and parses + validates the response against a Zod schema.
    * Extracts real token usage metadata provided by Google AI API.
    */
-  public async generateStructuredWithUsage<T>(
+  public async generateStructuredWithUsage<TOutput>(
     prompt: string,
-    schema: ZodSchema<T>,
-  ): Promise<GeminiStructuredResponse<T>> {
+    schema: ZodType<TOutput, any, any>,
+  ): Promise<GeminiStructuredResponse<TOutput>> {
     const startTime = Date.now();
 
     const response = await this.client.models.generateContent({
@@ -98,9 +98,9 @@ export class GeminiClient {
    */
   public async generateStructured<T>(
     prompt: string,
-    schema: ZodSchema<T>,
+    schema: ZodType<T, any, any>,
   ): Promise<T> {
-    const res = await this.generateStructuredWithUsage(prompt, schema);
+    const res = await this.generateStructuredWithUsage<T>(prompt, schema);
     return res.data;
   }
 }

@@ -30,14 +30,15 @@ export interface V2AuditAnalysisInput {
   previousActions: Array<{ actionType: string; description: string; result: string }>;
   snapshotsCount: number;
   accessibilityTrees?: string[];
+  evidencesSummary?: any[];
 }
 
 /**
  * AiService — Orchestrates all AI reasoning (Decision Engine) through the model-neutral AI client.
  *
- * In V2 (Architectural Refactoring):
+ * In V2 (Architectural Refactoring & Subetapa 3C Evidence-Based Audit):
  *   - Phase 1 (makeDecision): Ultra-lightweight navigation decision engine. 0 findings audit.
- *   - Phase 2 (performAuditAnalysis): Asynchronous specialized domain audit (Nielsen, WCAG 2.2, UX Writing).
+ *   - Phase 2 (performAuditAnalysis): Asynchronous evidence-based domain audit (Nielsen 10, WCAG 2.2, UX Writing).
  */
 export class AiService {
   private client: GeminiClient;
@@ -47,50 +48,45 @@ export class AiService {
   }
 
   /**
-   * [V2 - Phase 1] Evaluates active navigation context for the NEXT STEP decision only.
-   * Ultra-lightweight prompt: No UX or accessibility findings generated during exploration.
+   * [V2 - Phase 1] Ultra-lightweight AI Decision Engine for tactical exploration.
    */
-  async makeDecision(context: V2AIInputContext): Promise<{
+  async makeDecision(inputContext: V2AIInputContext): Promise<{
     result: V2AIOutputDecision;
     usage: TokenUsage;
     executionTimeMs: number;
   }> {
-    const validated = V2AIInputContextSchema.safeParse(context);
-    if (!validated.success) {
-      throw new AppError(`Invalid AI input context: ${validated.error.message}`, 400);
+    const inputValidation = V2AIInputContextSchema.safeParse(inputContext);
+    if (!inputValidation.success) {
+      throw new AppError(
+        `Invalid AI Input Context schema: ${inputValidation.error.message}`,
+        400,
+      );
     }
 
-    const prompt = this.buildV2DecisionPrompt(validated.data);
+    const prompt = this.buildV2DecisionPrompt(inputContext);
     const { data: rawResult, usage, executionTimeMs } = await this.client.generateStructuredWithUsage(
       prompt,
       V2AIOutputDecisionSchema,
     );
 
-    const result: V2AIOutputDecision = {
-      ...rawResult,
-      evaluationSummary: {
-        ...rawResult.evaluationSummary,
-        confidenceLevel: rawResult.evaluationSummary.confidenceLevel || 'high',
-      },
-      userIntention: {
-        description: rawResult.userIntention?.description || 'Navegación táctica',
-        derivedFromArchetype: rawResult.userIntention?.derivedFromArchetype ?? false,
-      },
-      riskAssessment: {
-        confusionProbability: rawResult.riskAssessment?.confusionProbability || 'low',
-        abandonmentRisk: rawResult.riskAssessment?.abandonmentRisk || 'low',
-        errorRisk: rawResult.riskAssessment?.errorRisk || 'low',
-      },
-      uxFindings: rawResult.uxFindings || [],
-      accessibilityFindings: rawResult.accessibilityFindings || [],
-    };
+    const resultValidation = V2AIOutputDecisionSchema.safeParse(rawResult);
+    if (!resultValidation.success) {
+      throw new AppError(
+        `Invalid AI Output Decision schema: ${resultValidation.error.message}`,
+        502,
+      );
+    }
 
-    return { result, usage, executionTimeMs };
+    return {
+      result: resultValidation.data,
+      usage,
+      executionTimeMs,
+    };
   }
 
   /**
    * [V2 - Phase 2] Specialized domain audit engine executed asynchronously after exploration completes.
-   * Uses explicit definitions of Nielsen 10 Heuristics, WCAG 2.2 criteria, and UX Writing rules.
+   * Uses evidence-based rules, explicit Nielsen 10, WCAG 2.2 criteria, and UX Writing rules.
    */
   async performAuditAnalysis(input: V2AuditAnalysisInput): Promise<{
     result: V2AuditOutput;
@@ -98,19 +94,12 @@ export class AiService {
     executionTimeMs: number;
   }> {
     const prompt = this.buildV2AuditPrompt(input);
-    const { data: rawResult, usage, executionTimeMs } = await this.client.generateStructuredWithUsage(
+    const { data: rawResult, usage, executionTimeMs } = await this.client.generateStructuredWithUsage<V2AuditOutput>(
       prompt,
       V2AuditOutputSchema,
     );
 
-    const result: V2AuditOutput = {
-      ...rawResult,
-      findings: (rawResult.findings || []).map((f) => ({
-        ...f,
-        severity: f.severity || 'medium',
-      })),
-    };
-
+    const result: V2AuditOutput = rawResult;
     return { result, usage, executionTimeMs };
   }
 
@@ -118,95 +107,105 @@ export class AiService {
    * [V1 Legacy] Performs a full UX analysis of a page given its DOM snapshot and context.
    */
   async analyzeUx(input: UxAnalysisInput): Promise<{ result: UxAnalysisOutput; executionTimeMs: number }> {
-    const validated = UxAnalysisInputSchema.safeParse(input);
-    if (!validated.success) {
-      throw new AppError(`Invalid AI input: ${validated.error.message}`, 400);
+    const inputValidation = UxAnalysisInputSchema.safeParse(input);
+    if (!inputValidation.success) {
+      throw new AppError(`Invalid UX Analysis Input: ${inputValidation.error.message}`, 400);
     }
 
-    const prompt = this.buildUxAnalysisPrompt(validated.data);
-
-    const startTime = Date.now();
-    const result = await this.client.generateStructured<UxAnalysisOutput>(
+    const prompt = this.buildUxAnalysisPrompt(input);
+    const { data: rawResult, executionTimeMs } = await this.client.generateStructuredWithUsage(
       prompt,
       UxAnalysisOutputSchema,
     );
-    const executionTimeMs = Date.now() - startTime;
 
-    return { result, executionTimeMs };
+    const resultValidation = UxAnalysisOutputSchema.safeParse(rawResult);
+    if (!resultValidation.success) {
+      throw new AppError(`Invalid UX Analysis Output from AI: ${resultValidation.error.message}`, 502);
+    }
+
+    return {
+      result: resultValidation.data,
+      executionTimeMs,
+    };
   }
 
   /**
-   * Builds Phase 1 Navigation Decision Prompt (Ultra-Lightweight, 0 Audit overhead).
+   * Builds Phase 1 Decision Prompt.
    */
-  private buildV2DecisionPrompt(input: V2AIInputContext): string {
+  private buildV2DecisionPrompt(ctx: V2AIInputContext): string {
     return `
-You are EvalUXIA's AI Decision Engine (Navigation Only).
-You simulate a specific user persona navigating a web application to fulfill a flow goal step-by-step.
-
-**Task**:
-Analyze the current navigation context, compare it with the user persona traits and step goals, and suggest ONLY the NEXT tactical browser action to execute.
+You are EvalUXIA's AI Navigation Agent (Phase 1).
+Your task is to propose the SINGLE MOST LOGICAL next browser action to explore the target webpage based ONLY on the user persona's goals and visible DOM elements.
 
 ---
 
-### INPUT CONTEXT:
-
-1. **Metadata**:
-- Evaluation ID: ${input.metadata.evaluationId}
-- Iteration: ${input.metadata.iteration}
-
-2. **Flow Goal & Current Step**:
-- Goal: "${input.flowDefinition.flowDescription}"
-- Current Step Objective: "${input.flowDefinition.currentStepObjective}"
-
-3. **Flow State**:
-- Completed Steps: ${input.flowState.completedSteps.join(', ') || 'None'}
-- Previous Actions: ${JSON.stringify(input.flowState.previousActions)}
-- Blocking Error: ${input.flowState.blockingError || 'None'}
-
-4. **User Archetype Profile**:
-- Name: ${input.userArchetype.fullName} (${input.userArchetype.profession}, Age: ${input.userArchetype.age})
-- Archetype: ${input.userArchetype.archetype}
-- Phrase: "${input.userArchetype.phrase}"
-- Goals: ${input.userArchetype.goals.join(', ')}
-- Frustrations: ${input.userArchetype.frustrations.join(', ')}
-
-5. **Technical Context**:
-- Current URL: ${input.technicalContext.url}
-- Visible Interactive Elements:
-${JSON.stringify(input.technicalContext.visibleDOMSummary)}
+### EVALUATION CONTEXT:
+- Evaluation ID: "${ctx.metadata.evaluationId}"
+- Iteration: ${ctx.metadata.iteration}
+- Current Target URL: "${ctx.technicalContext.url}"
+- Overall Flow Description: "${ctx.flowDefinition.flowDescription}"
+- Current Step Objective: "${ctx.flowDefinition.currentStepObjective}"
+- Evaluated Persona Archetype: ${ctx.userArchetype.fullName} (${ctx.userArchetype.archetype}, ${ctx.userArchetype.profession})
+  - Phrase: "${ctx.userArchetype.phrase}"
+  - Personality: "${ctx.userArchetype.personality}"
+  - Goals: ${ctx.userArchetype.goals.join(', ')}
+  - Frustrations: ${ctx.userArchetype.frustrations.join(', ')}
 
 ---
 
-### CONSTRAINTS & RULES:
-- Do not assume elements are clickable or visible unless present in 'visibleDOMSummary'.
-- Do not invent actions or selectors. Use CSS selectors, role labels, alt texts, or text values directly corresponding to elements in 'visibleDOMSummary'.
-- Suggest a maximum of ONE browser action per iteration.
-- Supported Action Types: CLICK, TYPE, HOVER, FOCUS, CLEAR, CHECK, UNCHECK, WAIT, NAVIGATE, SELECT.
-- For SELECT actions, set 'inputData' to the target option value or text.
-- If the flow goal is met or you hit an unresolvable blocker, set suggestedAction to null and recommendedNextStep to 'stopFlow'.
-- DO NOT generate UX findings, Nielsen audit codes, or WCAG accessibility reports during this step.
+### PREVIOUS ACTIONS EXECUTED:
+${JSON.stringify(ctx.flowState.previousActions, null, 2)}
+${ctx.flowState.blockingError ? `\n⚠️ BLOCKING ERROR IN LAST ACTION: "${ctx.flowState.blockingError}". Pick an alternative element or STOP_FLOW.\n` : ''}
+
+---
+
+### VISIBLE INTERACTIVE DOM ELEMENTS AVAILABLE ON CURRENT PAGE:
+\`\`\`json
+${JSON.stringify(ctx.technicalContext.visibleDOMSummary, null, 2)}
+\`\`\`
+
+---
+
+### AVAILABLE ACTIONS CONSTRAINTS:
+1. You may ONLY choose ONE action:
+   - "CLICK" (selector required, e.g. "button#submit", "a.link-class")
+   - "TYPE" (selector + inputData required, e.g. selector "input[type='number']", inputData "12345")
+   - "SELECT" (selector + inputData required, e.g. selector "select#dropdown", inputData "2")
+   - "CHECK" (selector required)
+   - "UNCHECK" (selector required)
+   - "HOVER" (selector required)
+   - "FOCUS" (selector required)
+   - "CLEAR" (selector required)
+   - "NAVIGATE" (inputData URL required)
+   - "STOP_FLOW" (no selector, indicates goal achieved or page unnavigable)
+
+2. Absolute Rule: Do NOT invent hidden or non-existent selectors. Use exact CSS selectors matching the elements provided above.
 
 ---
 
 Respond ONLY with valid JSON matching this exact structure:
 {
   "evaluationSummary": {
-    "flowCanContinue": <boolean>,
-    "notes": "<short explanation of current state>"
+    "flowCanContinue": true,
+    "notes": "<brief assessment of current screen state>"
+  },
+  "userIntention": {
+    "description": "<what the user persona intends to accomplish with this action>",
+    "derivedFromArchetype": true
   },
   "suggestedAction": {
-    "actionType": "<CLICK|TYPE|HOVER|FOCUS|CLEAR|CHECK|UNCHECK|WAIT|NAVIGATE|SELECT>",
+    "actionType": "<CLICK|TYPE|SELECT|CHECK|UNCHECK|HOVER|FOCUS|CLEAR|NAVIGATE|STOP_FLOW>",
     "targetElement": {
-      "matchStrategy": "<CSS|XPATH|TEXT|ROLE|LABEL|PLACEHOLDER|ALT_TEXT|TEST_ID>",
-      "value": "<selector value>"
+      "matchStrategy": "CSS",
+      "value": "<exact css selector from provided elements, null for STOP_FLOW>"
     },
-    "inputData": "<text to type for TYPE, option value for SELECT, otherwise omit>",
-    "rationale": "<action reasoning>",
-    "confidence": "<low|medium|high>"
-  } (or null),
+    "inputData": "<text to type, option value to select, or null>",
+    "rationale": "<brief tactical justification>",
+    "confidence": "<high|medium|low>"
+  },
   "flowControl": {
-    "isStopper": <boolean>,
-    "stopperReason": "<reason text or null>",
+    "isStopper": false,
+    "stopperReason": null,
     "recommendedNextStep": "<executeSuggestedAction|requestMoreContext|stopFlow>"
   }
 }
@@ -214,16 +213,23 @@ Respond ONLY with valid JSON matching this exact structure:
   }
 
   /**
-   * Builds Phase 2 Specialized Domain Audit Prompt (Explicit Heuristics, WCAG 2.2 & UX Writing).
+   * Builds Phase 2 Evidence-Based Domain Audit Prompt (Subetapa 3C).
    */
   private buildV2AuditPrompt(input: V2AuditAnalysisInput): string {
     return `
-You are EvalUXIA's Specialized Domain Audit Engine (Phase 2).
+You are EvalUXIA's Evidence-Based Specialized Domain Audit Engine (Phase 2).
 Your task is to conduct a rigorous, formal UX and Accessibility Audit on the full navigation session executed by a user persona.
 
 ---
 
-### EVALUATION CONTEXT:
+### ABSOLUTE AUDIT RULE: NO EVIDENCE = NO FAIL
+1. Every "FAIL" status finding MUST be grounded in direct, verifiable technical evidence provided below (DOM attributes, computed styles, headings hierarchy, or ARIA tree).
+2. If evidence for a criterion is insufficient or absent, classify the status as "NOT_EVALUABLE" or "PASS". Do NOT generate speculative, hypothetical conditional findings using words like "might", "could", "may", "if implemented".
+3. Every "FAIL" finding MUST include a concrete, actionable recommendation explaining exactly what the developer or designer should fix. NEVER use the heuristic code or name as the recommendation.
+
+---
+
+### EVALUATION SESSION CONTEXT:
 - Title: "${input.title}"
 - Target URL: "${input.url}"
 - Evaluated Archetype: ${input.archetype.fullName} (${input.archetype.archetype}, ${input.archetype.profession})
@@ -234,43 +240,40 @@ Your task is to conduct a rigorous, formal UX and Accessibility Audit on the ful
 - Executed Actions History:
 ${JSON.stringify(input.previousActions, null, 2)}
 - Total Snapshots Analyzed: ${input.snapshotsCount}
-${input.accessibilityTrees && input.accessibilityTrees.length > 0 ? `- Accessibility ARIA Snapshots:\n${input.accessibilityTrees.join('\n---\n')}` : ''}
+
+---
+
+### STRUCTURED TECHNICAL EVIDENCE BUNDLE FOR ALL SESSION ITERATIONS:
+\`\`\`json
+${JSON.stringify(input.evidencesSummary || [], null, 2)}
+\`\`\`
+
+${input.accessibilityTrees && input.accessibilityTrees.length > 0 ? `\n### ACCESSIBILITY ARIA SNAPSHOTS:\n${input.accessibilityTrees.join('\n---\n')}\n` : ''}
 
 ---
 
 ### DOMAIN EVALUATION FRAMEWORKS & EXPLICIT RULES:
 
 1. **JAKOB NIELSEN'S 10 USABILITY HEURISTICS (UX Domain)**:
-   - **N-01: Visibilidad del estado del sistema**: Feedback claro e inmediato de las acciones.
-   - **N-02: Coincidencia entre el sistema y el mundo real**: Lenguaje y conceptos familiares al usuario.
-   - **N-03: Control y libertad del usuario**: Salidas de emergencia, deshacer/rehacer sin frustración.
-   - **N-04: Consistencia y estándares**: Mismos términos, iconos y layouts en todo el flujo.
-   - **N-05: Prevención de errores**: Diseño defensivo que evita fallos antes de que ocurran.
-   - **N-06: Reconocimiento antes que recuerdo**: Opciones e instrucciones visibles sin exigir memorización.
-   - **N-07: Flexibilidad y eficiencia de uso**: Atajos para expertos sin entorpecer novatos.
-   - **N-08: Diseño estético y minimalista**: Diálogos sin información irrelevante o sobrecarga visual.
-   - **N-09: Ayudar a reconocer, diagnosticar y recuperarse de errores**: Mensajes de error claros en lenguaje llano.
-   - **N-10: Ayuda y documentación**: Instrucciones fáciles de buscar y orientadas a tareas.
+   - **N-01: Visibilidad del estado del sistema**
+   - **N-02: Coincidencia entre el sistema y el mundo real**
+   - **N-03: Control y libertad del usuario**
+   - **N-04: Consistencia y estándares**
+   - **N-05: Prevención de errores**
+   - **N-06: Reconocimiento antes que recuerdo**
+   - **N-07: Flexibilidad y eficiencia de uso**
+   - **N-08: Diseño estético y minimalista**
+   - **N-09: Ayudar a reconocer, diagnosticar y recuperarse de errores**
+   - **N-10: Ayuda y documentación**
 
 2. **WCAG 2.2 CORE ACCESSIBILITY CRITERIA (Accessibility Domain)**:
-   - **WCAG 1.1.1 Contenido no textual**: Alternativas de texto para imágenes, iconos y elementos gráficos.
-   - **WCAG 1.3.1 Información y relaciones**: Estructura semántica correcta (encabezados h1-h6, roles ARIA, labels de form).
-   - **WCAG 1.4.3 Contraste mínimo**: Ratio de contraste texto/fondo adecuado.
-   - **WCAG 2.1.1 Teclado**: Toda la funcionalidad accesible exclusivamente con teclado.
-   - **WCAG 2.4.4 Propósito de los enlaces**: Texto de enlace claro por sí solo.
-   - **WCAG 3.3.2 Etiquetas o instrucciones**: Labels visibles e instrucciones en campos requeridos.
-   - **WCAG 4.1.2 Nombre, función y valor**: Name, Role y Value accesibles en componentes interactivos.
-
-3. **UX WRITING & COGNITIVE FRICTION (Content Domain)**:
-   - Evalúa claridad, jerarquía textual, tono emocional y sobrecarga cognitiva orientada al arquetipo '${input.archetype.archetype}'.
-
-4. **SEVERITY CLASSIFICATION & SCORE FORMULA**:
-   - **critical** (Penalización: -20 ptos): Impide completar la tarea principal o bloquea la navegación.
-   - **high** (Penalización: -12 ptos): Causa seria confusión o frustración alta al arquetipo.
-   - **medium** (Penalización: -6 ptos): Molestia o retraso menor en la experiencia.
-   - **low** (Penalización: -2 ptos): Detalle cosmético o mejora menor.
-   - **info** (Penalización: 0 ptos): Observación informativa.
-   - **overallScore**: Inicia en 100 y resta las penalizaciones según los findings identificados (mínimo 0, máximo 100).
+   - **WCAG 1.1.1 Contenido no textual** (Imágenes, iconos)
+   - **WCAG 1.3.1 Información y relaciones** (Headings h1-h6, estructuras semánticas)
+   - **WCAG 1.4.3 Contraste mínimo** (Color texto/fondo)
+   - **WCAG 2.1.1 Teclado** (Navegación exclusivamente por teclado)
+   - **WCAG 2.4.4 Propósito de los enlaces** (Nombres accesibles de links)
+   - **WCAG 3.3.2 Etiquetas o instrucciones** (Labels visibles en formularios)
+   - **WCAG 4.1.2 Nombre, función y valor** (Name, Role y Value accesibles en botones/controles)
 
 ---
 
@@ -282,11 +285,30 @@ Respond ONLY with valid JSON matching this exact structure:
     {
       "findingGroup": "<ux|accessibility>",
       "type": "<usability|content|interaction|visual|wcag>",
-      "heuristic": "<e.g. N-01: Visibilidad del estado del sistema (for UX findings, null if accessibility)>",
-      "wcagCriterion": "<e.g. WCAG 1.1.1 Contenido no textual (for accessibility findings, null if UX)>",
-      "description": "<detailed problem description tailored to the archetype>",
-      "recommendation": "<actionable, clear fix recommendation>",
-      "affectedArchetypeTraits": ["<trait1>", "<trait2>"]
+      "status": "<PASS|FAIL|NOT_EVALUABLE>",
+      "severity": "<critical|high|medium|low|info>",
+      "confidence": "<high|medium|low>",
+      "heuristicCode": "<e.g. N-01>",
+      "heuristicName": "<e.g. Visibilidad del estado del sistema>",
+      "wcagCriterion": "<e.g. WCAG 1.4.3 Contraste (Mínimo)>",
+      "description": "<detailed problem description grounded in evidence>",
+      "evidence": [
+        {
+          "type": "<DOM_ATTRIBUTE|COMPUTED_STYLE|ACCESSIBILITY_TREE|SCREENSHOT|INTERACTION|HEADING_STRUCTURE>",
+          "property": "<property name or null>",
+          "value": "<observed value>",
+          "selector": "<css selector>"
+        }
+      ],
+      "affectedElement": {
+        "tag": "<tag>",
+        "text": "<text>",
+        "selector": "<selector>",
+        "role": "<role>"
+      },
+      "impact": "<user impact explanation>",
+      "recommendation": "<actionable fix recommendation for developer>",
+      "affectedArchetypeTraits": ["<trait1>"]
     }
   ]
 }
@@ -328,20 +350,18 @@ Respond ONLY with a valid JSON object matching this exact structure (no markdown
   "findings": [
     {
       "id": "<unique-id>",
-      "severity": "<critical|high|medium|low|info>",
-      "category": "<accessibility|usability|performance|content|navigation|visual>",
-      "title": "<short finding title>",
-      "description": "<detailed description>",
-      "affectedElement": "<CSS selector or element description, optional>",
-      "recommendation": "<specific actionable recommendation>",
-      "wcagCriteria": "<WCAG criterion if applicable, optional>"
+      "title": "<finding title>",
+      "description": "<detailed explanation>",
+      "type": "<usability|accessibility|clarity|navigation|interaction>",
+      "severity": "<critical|high|medium|low>",
+      "heuristic": "<optional Nielsen heuristic>",
+      "wcagCriterion": "<optional WCAG criterion>",
+      "recommendation": "<actionable fix>"
     }
-  ],
-  "nextActions": ["<suggested next evaluation step>"]
+  ]
 }
 `.trim();
   }
 }
 
 export const aiService = new AiService();
-export const aiDecisionService = aiService;

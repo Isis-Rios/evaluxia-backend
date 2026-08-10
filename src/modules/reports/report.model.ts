@@ -17,7 +17,20 @@ export interface IReport extends Document {
   mediumCount: number;
   lowCount: number;
   infoCount: number;
-  overallScore?: number;
+  passCount?: number;
+  failCount?: number;
+  notEvaluableCount?: number;
+  nielsenCompliance?: number | null;
+  wcagCompliance?: number | null;
+  auditCoverage?: number;
+  nielsenCoverage?: number;
+  wcagCoverage?: number;
+  evaluatedCriteria?: number;
+  totalCriteria?: number;
+  evidenceCount?: number;
+  screenshotsCount?: number;
+  iterationsEvaluated?: number;
+  overallScore?: number | null;
   metrics?: EvaluationMetrics;
   generatedAt?: Date;
   createdAt: Date;
@@ -38,7 +51,20 @@ const ReportSchema = new Schema<IReport>(
     mediumCount: { type: Number, default: 0 },
     lowCount: { type: Number, default: 0 },
     infoCount: { type: Number, default: 0 },
-    overallScore: { type: Number, min: 0, max: 100 },
+    passCount: { type: Number, default: 0 },
+    failCount: { type: Number, default: 0 },
+    notEvaluableCount: { type: Number, default: 0 },
+    nielsenCompliance: { type: Number, default: null },
+    wcagCompliance: { type: Number, default: null },
+    auditCoverage: { type: Number, default: 0 },
+    nielsenCoverage: { type: Number, default: 0 },
+    wcagCoverage: { type: Number, default: 0 },
+    evaluatedCriteria: { type: Number, default: 0 },
+    totalCriteria: { type: Number, default: 20 },
+    evidenceCount: { type: Number, default: 0 },
+    screenshotsCount: { type: Number, default: 0 },
+    iterationsEvaluated: { type: Number, default: 1 },
+    overallScore: { type: Number, default: null },
     metrics: { type: Schema.Types.Mixed, default: null },
     generatedAt: { type: Date },
   },
