@@ -26,12 +26,36 @@ export interface ClassifiedAiError {
 }
 
 /**
+ * Thrown when Gemini's response cannot be turned into a valid decision:
+ * empty text, JSON that fails to parse, or JSON that does not match the
+ * expected Zod contract. Distinguished from network/transport errors so
+ * `classifyAiError` can classify it deterministically via `instanceof`
+ * rather than by inspecting error text (which could otherwise misfire if
+ * the malformed payload itself happens to contain a string like "429").
+ */
+export class InvalidAiResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidAiResponseError';
+    Object.setPrototypeOf(this, InvalidAiResponseError.prototype);
+  }
+}
+
+/**
  * Classifies an error from the AI provider or network transport.
  * Prioritizes structured error codes and statuses from SDK / API over text inspection.
  */
 export function classifyAiError(error: unknown): ClassifiedAiError {
   if (!error) {
     return { isRetryable: false, statusCode: 500, reason: 'Unknown error' };
+  }
+
+  // 0. Malformed/contract-invalid Gemini response — retried like any other
+  // transient failure (bounded by the same maxRetries), since a fresh
+  // generation has a real chance of producing a well-formed response for a
+  // non-deterministic model.
+  if (error instanceof InvalidAiResponseError) {
+    return { isRetryable: true, statusCode: 502, reason: `Invalid Gemini response: ${error.message}` };
   }
 
   const err = error as any;
@@ -198,58 +222,65 @@ export class GeminiClient {
   ): Promise<GeminiStructuredResponse<TOutput>> {
     const startTime = Date.now();
 
-    const response = await this.executeWithRetry(async () => {
-      return this.client.models.generateContent({
+    // The full "call Gemini → parse → validate" cycle runs inside
+    // executeWithRetry as a single unit: an empty response, malformed JSON,
+    // or a contract-schema mismatch throws InvalidAiResponseError, which
+    // classifyAiError marks retryable — so a bad response triggers a fresh
+    // Gemini call (up to the same maxRetries as network/5xx errors), instead
+    // of being fatal for the whole iteration on the first bad reply.
+    const { data, usage } = await this.executeWithRetry(async () => {
+      const response = await this.client.models.generateContent({
         model: env.GEMINI_MODEL,
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
         },
       });
+
+      const rawText = response.text;
+      if (!rawText) {
+        throw new InvalidAiResponseError('Gemini returned an empty response');
+      }
+
+      // Extract real usage metadata from API response if present, or estimate based on length
+      const usageMetadata = (response as any).usageMetadata;
+      const promptTokens = usageMetadata?.promptTokenCount ?? Math.ceil(prompt.length / 4);
+      const outputTokens = usageMetadata?.candidatesTokenCount ?? Math.ceil(rawText.length / 4);
+      const totalTokens = usageMetadata?.totalTokenCount ?? (promptTokens + outputTokens);
+
+      const usage: TokenUsage = {
+        promptTokens,
+        outputTokens,
+        totalTokens,
+      };
+
+      // Strip markdown code fences if wrapped
+      const cleaned = rawText
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        throw new InvalidAiResponseError(`Gemini response is not valid JSON. Raw: ${cleaned.slice(0, 200)}`);
+      }
+
+      const validated = schema.safeParse(parsed);
+      if (!validated.success) {
+        throw new InvalidAiResponseError(
+          `Gemini response does not match expected contract: ${validated.error.message}`,
+        );
+      }
+
+      return { data: validated.data, usage };
     }, retryOpts);
 
     const executionTimeMs = Date.now() - startTime;
-    const rawText = response.text;
-
-    if (!rawText) {
-      throw new AppError('Gemini returned an empty response', 502);
-    }
-
-    // Extract real usage metadata from API response if present, or estimate based on length
-    const usageMetadata = (response as any).usageMetadata;
-    const promptTokens = usageMetadata?.promptTokenCount ?? Math.ceil(prompt.length / 4);
-    const outputTokens = usageMetadata?.candidatesTokenCount ?? Math.ceil(rawText.length / 4);
-    const totalTokens = usageMetadata?.totalTokenCount ?? (promptTokens + outputTokens);
-
-    const usage: TokenUsage = {
-      promptTokens,
-      outputTokens,
-      totalTokens,
-    };
-
-    // Strip markdown code fences if wrapped
-    const cleaned = rawText
-      .replace(/^```(?:json)?\s*/i, '')
-      .replace(/\s*```$/i, '')
-      .trim();
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(cleaned);
-    } catch {
-      throw new AppError(`Gemini response is not valid JSON. Raw: ${cleaned.slice(0, 200)}`, 502);
-    }
-
-    const validated = schema.safeParse(parsed);
-    if (!validated.success) {
-      throw new AppError(
-        `Gemini response does not match expected contract: ${validated.error.message}`,
-        502,
-      );
-    }
 
     return {
-      data: validated.data,
+      data,
       usage,
       executionTimeMs,
     };

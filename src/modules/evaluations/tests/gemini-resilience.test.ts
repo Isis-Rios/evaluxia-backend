@@ -1,4 +1,5 @@
-import { GeminiClient, classifyAiError } from '@/infrastructure/gemini/gemini.client';
+import { z } from 'zod';
+import { GeminiClient, classifyAiError, InvalidAiResponseError } from '@/infrastructure/gemini/gemini.client';
 import { ruleEngine } from '@/modules/evaluations/services/rule-engine.service';
 import { V2AIInputContext } from '@/modules/evaluations/services/context-builder.service';
 import { AppError } from '@/shared/errors/AppError';
@@ -292,6 +293,124 @@ async function runGeminiResilienceTestSuite() {
       persistedState.flowState.blockingError?.includes('[AI_PROVIDER_ERROR 503]'),
       'Caso G: blockingError identifica claramente error 503 del AI Provider',
     );
+  }
+
+  // --------------------------------------------------------------------------
+  // Casos H-K (Phase B): generateStructuredWithUsage ante respuestas
+  // inválidas de Gemini. Stubbea `client.models.generateContent` (el SDK real
+  // nunca se invoca, cero llamadas/costo real) para simular exactamente el
+  // texto que Gemini devolvería, y ejercita el pipeline COMPLETO
+  // (parseo + validación de contrato + retry), no solo executeWithRetry
+  // aislado como en los Casos A-E.
+  // --------------------------------------------------------------------------
+  const TestDecisionSchema = z.object({
+    actionType: z.enum(['CLICK', 'TYPE', 'STOP_FLOW']),
+    rationale: z.string(),
+  });
+
+  function stubGenerateContent(responses: Array<string | Error>): { callCount: () => number } {
+    let callCount = 0;
+    (client as any).client.models.generateContent = async () => {
+      const next = responses[Math.min(callCount, responses.length - 1)];
+      callCount++;
+      if (next instanceof Error) throw next;
+      return { text: next, usageMetadata: undefined };
+    };
+    return { callCount: () => callCount };
+  }
+
+  // Caso H: respuesta válida en el primer intento — comportamiento actual sin cambios.
+  console.log('\n--- Caso H: Gemini responde con JSON válido y contrato válido ---');
+  {
+    const stub = stubGenerateContent([
+      JSON.stringify({ actionType: 'CLICK', rationale: 'Único botón visible' }),
+    ]);
+
+    const result = await client.generateStructuredWithUsage(
+      'prompt de prueba',
+      TestDecisionSchema,
+      { maxRetries: 3, initialDelayMs: 10, jitterMs: 0 },
+    );
+
+    assert(stub.callCount() === 1, 'Caso H: Gemini se llamó exactamente 1 vez (sin reintentos necesarios)');
+    assert(result.data.actionType === 'CLICK', 'Caso H: la decisión parseada y validada es correcta');
+    assert(typeof result.usage.totalTokens === 'number', 'Caso H: se calculan métricas de uso de tokens');
+  }
+
+  // Caso I: JSON malformado en el primer intento, válido en el segundo ➡️ recupera.
+  console.log('\n--- Caso I: JSON malformado ➡️ retry ➡️ respuesta válida ---');
+  {
+    const stub = stubGenerateContent([
+      '{ "actionType": "CLICK",', // JSON incompleto/malformado
+      JSON.stringify({ actionType: 'TYPE', rationale: 'Recuperado tras retry' }),
+    ]);
+
+    const result = await client.generateStructuredWithUsage(
+      'prompt de prueba',
+      TestDecisionSchema,
+      { maxRetries: 3, initialDelayMs: 10, jitterMs: 0 },
+    );
+
+    assert(stub.callCount() === 2, 'Caso I: se reintentó exactamente 1 vez tras el JSON malformado');
+    assert(result.data.actionType === 'TYPE', 'Caso I: la decisión final es la de la respuesta válida, no una inventada');
+  }
+
+  // Caso J: JSON válido pero incompatible con el contrato, luego válido ➡️ recupera.
+  console.log('\n--- Caso J: JSON válido pero contrato inválido ➡️ retry ➡️ respuesta válida ---');
+  {
+    const stub = stubGenerateContent([
+      JSON.stringify({ foo: 'bar' }), // JSON válido, no cumple TestDecisionSchema
+      JSON.stringify({ actionType: 'STOP_FLOW', rationale: 'Recuperado tras retry de contrato' }),
+    ]);
+
+    const result = await client.generateStructuredWithUsage(
+      'prompt de prueba',
+      TestDecisionSchema,
+      { maxRetries: 3, initialDelayMs: 10, jitterMs: 0 },
+    );
+
+    assert(stub.callCount() === 2, 'Caso J: se reintentó exactamente 1 vez tras el contrato inválido');
+    assert(result.data.actionType === 'STOP_FLOW', 'Caso J: la decisión final respeta el contrato, no la respuesta inválida');
+  }
+
+  // Caso K: todas las respuestas son inválidas ➡️ agota reintentos ➡️ error controlado, NUNCA una decisión inventada.
+  console.log('\n--- Caso K: respuestas inválidas persistentes ➡️ agotamiento de reintentos ➡️ error controlado ---');
+  {
+    const stub = stubGenerateContent([
+      '{ not even json',
+      '{ not even json',
+      '{ not even json',
+    ]);
+
+    let caughtError: any = null;
+    let producedDecision = false;
+    try {
+      const result = await client.generateStructuredWithUsage(
+        'prompt de prueba',
+        TestDecisionSchema,
+        { maxRetries: 2, initialDelayMs: 10, jitterMs: 0 },
+      );
+      producedDecision = !!result; // no debería llegar aquí
+    } catch (err: any) {
+      caughtError = err;
+    }
+
+    assert(!producedDecision, 'Caso K: NUNCA se produjo una decisión (ni inventada ni parcial) tras agotar los reintentos');
+    assert(stub.callCount() === 3, 'Caso K: se intentó 1 llamada inicial + 2 reintentos (maxRetries=2) = 3 intentos');
+    assert(caughtError instanceof AppError, 'Caso K: se lanza un AppError tipado, siguiendo el patrón de error existente');
+    assert(caughtError?.statusCode === 502, 'Caso K: preserva el statusCode 502 (respuesta de IA inválida)');
+    assert(
+      caughtError?.message?.includes('AI Service Unavailable') || caughtError?.message?.includes('Invalid Gemini response'),
+      'Caso K: el mensaje describe el agotamiento de reintentos por respuesta inválida',
+    );
+  }
+
+  // Caso extra: classifyAiError reconoce InvalidAiResponseError como reintentable de forma determinística.
+  console.log('\n--- Unit: classifyAiError(InvalidAiResponseError) ---');
+  {
+    const c = classifyAiError(new InvalidAiResponseError('Gemini response is not valid JSON. Raw: ...'));
+    assert(c.isRetryable === true, 'classifyAiError: InvalidAiResponseError es reintentable');
+    assert(c.statusCode === 502, 'classifyAiError: InvalidAiResponseError usa statusCode 502');
   }
 
   console.log(`\n========================================`);
