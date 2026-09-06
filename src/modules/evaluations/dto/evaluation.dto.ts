@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { assertSafeUrl, UnsafeUrlError } from '@/shared/security/url-guard';
 
 /**
  * Zod schemas for Evaluation DTOs.
@@ -18,7 +19,22 @@ export const CreateEvaluationSchema = z.object({
   type: z.enum(['prototype', 'website'], {
     errorMap: () => ({ message: "type must be 'prototype' or 'website'" }),
   }),
-  url: z.string().url('url must be a valid URL (include https://)'),
+  url: z
+    .string()
+    .url('url must be a valid URL (include https://)')
+    .superRefine(async (url, ctx) => {
+      try {
+        await assertSafeUrl(url);
+      } catch (err) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            err instanceof UnsafeUrlError
+              ? err.message
+              : 'url points to a disallowed destination',
+        });
+      }
+    }),
 });
 
 export const UpdateEvaluationSchema = CreateEvaluationSchema.partial();

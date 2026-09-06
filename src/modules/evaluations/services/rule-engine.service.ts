@@ -82,10 +82,12 @@ export class RuleEngine {
       const btn = primaryButtons[0];
       return {
         actionType: 'CLICK',
-        targetElement: {
-          matchStrategy: btn.ariaLabel ? 'LABEL' : 'TEXT',
-          value: btn.ariaLabel || btn.text || 'button',
-        },
+        targetElement: btn.selector
+          ? { matchStrategy: 'CSS', value: btn.selector }
+          : {
+              matchStrategy: btn.ariaLabel ? 'LABEL' : 'TEXT',
+              value: btn.ariaLabel || btn.text || 'button',
+            },
         rationale: `Deterministic Rule: Detected only one active primary button (${btn.text || btn.ariaLabel}) with no other inputs or links to interact. Clicking to advance.`,
         confidence: 'high',
       };
@@ -103,10 +105,12 @@ export class RuleEngine {
 
       return {
         actionType,
-        targetElement: {
-          matchStrategy: singleEl.ariaLabel ? 'LABEL' : 'TEXT',
-          value: singleEl.ariaLabel || singleEl.text || 'element',
-        },
+        targetElement: singleEl.selector
+          ? { matchStrategy: 'CSS', value: singleEl.selector }
+          : {
+              matchStrategy: singleEl.ariaLabel ? 'LABEL' : 'TEXT',
+              value: singleEl.ariaLabel || singleEl.text || 'element',
+            },
         rationale: `Deterministic Rule: Found exactly one enabled interactive element (${singleEl.type}: ${singleEl.text || singleEl.ariaLabel}) on the page.`,
         confidence: 'high',
       };
@@ -124,30 +128,42 @@ export class RuleEngine {
       if (nextButton) {
         return {
           actionType: 'CLICK',
-          targetElement: {
-            matchStrategy: nextButton.ariaLabel ? 'LABEL' : 'TEXT',
-            value: nextButton.ariaLabel || nextButton.text || 'button',
-          },
+          targetElement: nextButton.selector
+            ? { matchStrategy: 'CSS', value: nextButton.selector }
+            : {
+                matchStrategy: nextButton.ariaLabel ? 'LABEL' : 'TEXT',
+                value: nextButton.ariaLabel || nextButton.text || 'button',
+              },
           rationale: `Deterministic Rule: Matched step objective with navigation button '${nextButton.text || nextButton.ariaLabel}'.`,
           confidence: 'high',
         };
       }
     }
 
-    // Regla 5: Secuenciación determinística TYPE ➡️ Submit / Continuación
+    // Regla 5: Secuenciación determinística TYPE ➡️ Submit / Continuación contextual
     if (prevActions.length > 0) {
       const lastAction = prevActions[prevActions.length - 1];
       const isLastActionType = lastAction.actionType === 'TYPE' || lastAction.actionType === 'TYPE_TEXT';
       const isLastActionSuccess = lastAction.result === 'success';
 
       if (isLastActionType && isLastActionSuccess) {
-        const submitSignals = [
-          'submit', 'search', 'continue', 'next', 'send', 'log in', 'login', 'sign in', 'signin', 'go', 'enter', 'confirm', 'ok', 'save',
-          'enviar', 'buscar', 'continuar', 'siguiente', 'ingresar', 'entrar', 'iniciar sesión', 'iniciar sesion', 'guardar', 'confirmar', 'aceptar',
+        // Detección contextual: ¿El input anterior era de búsqueda o un formulario general (ej. email, login, registro)?
+        const lastActionDesc = (lastAction.description || '').toLowerCase();
+        const isSearchContext = /search|buscar|query|búsqueda|busqueda|find/i.test(lastActionDesc);
+
+        const generalSubmitSignals = [
+          'submit', 'continue', 'next', 'send', 'log in', 'login', 'sign in', 'signin', 'go', 'enter', 'confirm', 'ok', 'save',
+          'enviar', 'continuar', 'siguiente', 'ingresar', 'entrar', 'iniciar sesión', 'iniciar sesion', 'guardar', 'confirmar', 'aceptar',
+          'subscribe', 'suscribir', 'download', 'descargar',
         ];
+        const searchSubmitSignals = ['search', 'buscar'];
+
+        const activeSignals = isSearchContext
+          ? [...generalSubmitSignals, ...searchSubmitSignals]
+          : generalSubmitSignals;
 
         const enabledActionables = elements.filter(
-          el => !el.isDisabled && (el.type === 'button' || el.role === 'button' || el.role === 'search'),
+          el => !el.isDisabled && (el.type === 'button' || el.role === 'button' || (isSearchContext && el.role === 'search')),
         );
 
         const submitBtn = enabledActionables.find(el => {
@@ -155,19 +171,26 @@ export class RuleEngine {
           const lbl = (el.ariaLabel || '').toLowerCase().trim();
           const role = (el.role || '').toLowerCase().trim();
 
-          return submitSignals.some(signal =>
-            txt.includes(signal) || lbl.includes(signal) || role === signal,
+          // Si no es contexto de búsqueda, ignorar explícitamente elementos cuyo único rol/texto sea Search
+          if (!isSearchContext && (role === 'search' || txt === 'search' || txt === 'buscar' || lbl === 'search' || lbl === 'buscar')) {
+            return false;
+          }
+
+          return activeSignals.some(signal =>
+            txt.includes(signal) || lbl.includes(signal) || (isSearchContext && role === signal),
           );
         });
 
         if (submitBtn) {
           return {
             actionType: 'CLICK',
-            targetElement: {
-              matchStrategy: submitBtn.ariaLabel ? 'LABEL' : 'TEXT',
-              value: submitBtn.ariaLabel || submitBtn.text || 'submit button',
-            },
-            rationale: `Deterministic Rule: Found enabled continuation/submit button '${submitBtn.text || submitBtn.ariaLabel}' after successful TYPE action.`,
+            targetElement: submitBtn.selector
+              ? { matchStrategy: 'CSS', value: submitBtn.selector }
+              : {
+                  matchStrategy: submitBtn.ariaLabel ? 'LABEL' : 'TEXT',
+                  value: submitBtn.ariaLabel || submitBtn.text || 'submit button',
+                },
+            rationale: `Deterministic Rule: Found enabled continuation/submit button '${submitBtn.text || submitBtn.ariaLabel}' after successful TYPE action (${isSearchContext ? 'search' : 'form'} context).`,
             confidence: 'high',
           };
         }

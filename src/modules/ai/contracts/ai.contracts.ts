@@ -227,42 +227,158 @@ export const V2AIOutputDecisionSchema = z.object({
 
 export type V2AIOutputDecision = z.output<typeof V2AIOutputDecisionSchema>;
 
-// =============================================================================
-// ─── FASE 2 AUDIT SCHEMAS (Auditoría Asíncrona Especializada — Subetapa 3B) ──
-// =============================================================================
+import type { TechnicalEvidenceType } from '@/modules/findings/finding.model';
 
-export const TechnicalEvidenceItemSchema = z.object({
-  type: z.enum([
-    'DOM_ATTRIBUTE',
-    'COMPUTED_STYLE',
-    'ACCESSIBILITY_TREE',
-    'SCREENSHOT',
-    'INTERACTION',
-    'HEADING_STRUCTURE',
-  ]),
-  property: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
-  value: z.union([z.string(), z.number(), z.boolean()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
-  selector: z.string().optional(),
-  attribute: z.string().optional(),
-  measurement: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
-  context: z.string().optional(),
-  relatedValue: z
+const KNOWN_EVIDENCE_TYPE_ALIASES: Record<string, { type: TechnicalEvidenceType; defaultProperty?: string }> = {
+  CURRENT_URL: { type: 'INTERACTION', defaultProperty: 'url' },
+  URL: { type: 'INTERACTION', defaultProperty: 'url' },
+  LOCATION: { type: 'INTERACTION', defaultProperty: 'url' },
+  BUTTON_PROPERTIES: { type: 'DOM_ATTRIBUTE' },
+  FORM_PROPERTIES: { type: 'DOM_ATTRIBUTE' },
+  LINK_PROPERTIES: { type: 'DOM_ATTRIBUTE' },
+  IMAGE_PROPERTIES: { type: 'DOM_ATTRIBUTE' },
+  ELEMENT_PROPERTIES: { type: 'DOM_ATTRIBUTE' },
+  ARIA_SNAPSHOT: { type: 'ACCESSIBILITY_TREE' },
+  ACCESSIBILITY_PROPERTIES: { type: 'ACCESSIBILITY_TREE' },
+  TEXT_CONTRAST: { type: 'COMPUTED_STYLE' },
+  COLOR_CONTRAST: { type: 'COMPUTED_STYLE' },
+};
+
+export const TechnicalEvidenceItemSchema = z.preprocess(
+  (raw: any) => {
+    if (raw && typeof raw === 'object' && typeof raw.type === 'string') {
+      const upper = raw.type.trim().toUpperCase();
+      const alias = KNOWN_EVIDENCE_TYPE_ALIASES[upper];
+      if (alias) {
+        const hasProp = raw.property !== undefined && raw.property !== null && String(raw.property).trim().length > 0;
+        return {
+          ...raw,
+          type: alias.type,
+          property: hasProp ? raw.property : alias.defaultProperty || undefined,
+        };
+      }
+    }
+    return raw;
+  },
+  z
     .object({
-      property: z.union([z.string(), z.number()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
-      value: z.union([z.string(), z.number(), z.boolean()]).nullish().transform((v) => v === undefined || v === null ? undefined : String(v)),
+      type: z.enum([
+        'DOM_ATTRIBUTE',
+        'COMPUTED_STYLE',
+        'ACCESSIBILITY_TREE',
+        'SCREENSHOT',
+        'INTERACTION',
+        'HEADING_STRUCTURE',
+      ]),
+      property: z
+        .union([z.string(), z.number()])
+        .nullish()
+        .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+      value: z
+        .union([z.string(), z.number(), z.boolean()])
+        .nullish()
+        .transform((v) => (v === undefined ? undefined : v === null ? 'null' : String(v))),
+      selector: z
+        .string()
+        .nullish()
+        .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+      attribute: z
+        .string()
+        .nullish()
+        .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+      measurement: z
+        .union([z.string(), z.number()])
+        .nullish()
+        .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+      context: z
+        .string()
+        .nullish()
+        .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+      relatedValue: z
+        .object({
+          property: z
+            .union([z.string(), z.number()])
+            .nullish()
+            .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+          value: z
+            .union([z.string(), z.number(), z.boolean()])
+            .nullish()
+            .transform((v) => (v === undefined || v === null ? undefined : String(v))),
+        })
+        .optional(),
     })
-    .optional(),
-});
+    .superRefine((item, ctx) => {
+      const isNonEmpty = (v: string | undefined | null): boolean =>
+        v !== undefined && v !== null && String(v).trim().length > 0;
+
+      const hasProp = isNonEmpty(item.property);
+      const hasAttr = isNonEmpty(item.attribute);
+      const hasVal = isNonEmpty(item.value);
+
+      switch (item.type) {
+        case 'DOM_ATTRIBUTE':
+          if (!hasProp && !hasAttr) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'DOM_ATTRIBUTE evidence must specify property or attribute.',
+              path: ['property'],
+            });
+          }
+          if (!hasVal) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'DOM_ATTRIBUTE evidence must specify observed value.',
+              path: ['value'],
+            });
+          }
+          break;
+
+        case 'COMPUTED_STYLE':
+          if (!hasProp) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'COMPUTED_STYLE evidence must specify style property (e.g. contrastRatio, fontSize).',
+              path: ['property'],
+            });
+          }
+          if (!hasVal) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: 'COMPUTED_STYLE evidence must specify calculated value (e.g. 2.32:1).',
+              path: ['value'],
+            });
+          }
+          break;
+
+        case 'ACCESSIBILITY_TREE':
+        case 'SCREENSHOT':
+        case 'INTERACTION':
+        case 'HEADING_STRUCTURE':
+          const hasContext = isNonEmpty(item.context);
+          if (!hasProp && !hasVal && !hasContext) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `${item.type} evidence must specify property, value, or context describing the observation.`,
+              path: ['value'],
+            });
+          }
+          break;
+      }
+    }),
+);
 
 export const AffectedElementSchema = z.object({
-  tag: z.string().optional(),
-  text: z.string().optional(),
-  selector: z.string().optional(),
-  role: z.string().optional(),
-  ariaLabel: z.string().optional(),
-  href: z.string().optional(),
-  id: z.string().optional(),
-  attributes: z.record(z.string(), z.string()).optional(),
+  tag: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  text: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  selector: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  role: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  ariaLabel: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  href: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  id: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),
+  attributes: z
+    .record(z.string(), z.string())
+    .nullish()
+    .transform((v) => (v === undefined || v === null ? undefined : v)),
 });
 
 export const V2AuditFindingSchema = z

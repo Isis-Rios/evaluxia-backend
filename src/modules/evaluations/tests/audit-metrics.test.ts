@@ -168,7 +168,188 @@ function runAuditMetricsTests() {
   }
   console.log('✅ Tests 17-20 (Deterministic reproducibility & Gemini independence) passed.');
 
-  console.log('\n🎉 ALL 20 Subetapa 3D Deterministic Metrics Tests passed successfully!');
+  // ==========================================================================
+  // Stage 2 Tests: Deduplication, Deterministic Priority, Selector Coherence
+  // ==========================================================================
+
+  // Test 21 — Stage 2 - A: Typographic WCAG deduplication
+  // "WCAG 1.4.3 Contraste (Minimo)" (deterministic) and "WCAG 1.4.3 Contraste minimo" (AI)
+  // for the same selector must produce exactly 1 consolidated finding.
+  const dedupTypoFindings: InputAuditFinding[] = [
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste (Minimo)',
+      description: 'Deterministic: contrast insuficiente 2.32:1.',
+      evidence: [{ type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '2.32:1', selector: 'a:nth-of-type(1)' }],
+      affectedElement: { tag: 'a', text: 'See Live Example', selector: 'a:nth-of-type(1)' },
+      iteration: 1,
+    },
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'critical',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste minimo',
+      description: 'AI: contrast ratio approximately 3.12:1.',
+      evidence: [
+        { type: 'COMPUTED_STYLE', property: 'color', value: 'rgb(255, 255, 255)', selector: 'a:nth-of-type(1)' },
+        { type: 'COMPUTED_STYLE', property: 'backgroundColor', value: 'rgb(255, 138, 91)', selector: 'a:nth-of-type(1)' },
+        { type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '3.12:1', selector: 'a:nth-of-type(1)' },
+      ],
+      affectedElement: { tag: 'a', text: 'See Live Example', selector: 'a:nth-of-type(1)' },
+      iteration: 1,
+    },
+  ];
+  const dedupResult = auditMetricsService.deduplicateFindings(dedupTypoFindings);
+  if (dedupResult.length !== 1) {
+    console.error(`❌ Test 21 (Stage 2-A) Failed: Expected 1 consolidated finding, got ${dedupResult.length}`);
+    process.exit(1);
+  }
+  console.log('✅ Test 21 (Stage 2-A: Typographic WCAG deduplication -> 1 finding) passed.');
+
+  // Test 22 — Stage 2 - B: Deterministic contrastRatio takes priority
+  // The consolidated finding must retain "2.32:1" (deterministic) and NOT "3.12:1" (AI estimate).
+  const consolidatedContrast = dedupResult[0];
+  const contrastRatioEvItems = (consolidatedContrast.evidence || []).filter(
+    (e) => e.property === 'contrastRatio',
+  );
+  if (contrastRatioEvItems.length !== 1 || contrastRatioEvItems[0].value !== '2.32:1') {
+    console.error('❌ Test 22 (Stage 2-B) Failed: Deterministic ratio 2.32:1 not preserved. Got:', contrastRatioEvItems);
+    process.exit(1);
+  }
+  console.log('✅ Test 22 (Stage 2-B: Deterministic contrastRatio 2.32:1 preserved, 3.12:1 discarded) passed.');
+
+  // Test 23 — Stage 2 - C: Compatible evidence from same selector IS fused
+  // color and backgroundColor from AI (same selector) should be present in consolidated finding.
+  const hasColor = (consolidatedContrast.evidence || []).some(
+    (e) => e.property === 'color' && e.selector === 'a:nth-of-type(1)',
+  );
+  const hasBg = (consolidatedContrast.evidence || []).some(
+    (e) => e.property === 'backgroundColor' && e.selector === 'a:nth-of-type(1)',
+  );
+  if (!hasColor || !hasBg) {
+    console.error('❌ Test 23 (Stage 2-C) Failed: Compatible color/backgroundColor evidence from AI not fused. Evidence:', consolidatedContrast.evidence);
+    process.exit(1);
+  }
+  console.log('✅ Test 23 (Stage 2-C: Compatible contextual evidence from same selector fused) passed.');
+
+  // Test 24 — Stage 2 - C: Evidence from a DIFFERENT selector is NOT fused
+  // 13.73:1 from a different selector must NOT appear in the a:nth-of-type(1) finding.
+  const mixedSelectorFindings: InputAuditFinding[] = [
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste (Minimo)',
+      description: 'Deterministic: 2.32:1 for CTA button.',
+      evidence: [{ type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '2.32:1', selector: 'a:nth-of-type(1)' }],
+      affectedElement: { tag: 'a', selector: 'a:nth-of-type(1)' },
+      iteration: 1,
+    },
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste minimo',
+      description: 'AI finding that incorrectly mixes evidence from another element.',
+      evidence: [
+        { type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '13.73:1', selector: 'h1.dark-title' },
+        { type: 'COMPUTED_STYLE', property: 'color', value: 'rgb(255, 255, 255)', selector: 'a:nth-of-type(1)' },
+      ],
+      affectedElement: { tag: 'a', selector: 'a:nth-of-type(1)' },
+      iteration: 1,
+    },
+  ];
+  const mixedResult = auditMetricsService.deduplicateFindings(mixedSelectorFindings);
+  const mixedConsolidated = mixedResult[0];
+  const has1373 = (mixedConsolidated.evidence || []).some(
+    (e) => e.value === '13.73:1' && e.selector === 'h1.dark-title',
+  );
+  if (has1373) {
+    console.error('❌ Test 24 (Stage 2-C) Failed: Evidence from a:nth-of-type(1) finding contains 13.73:1 from h1.dark-title selector.');
+    process.exit(1);
+  }
+  console.log('✅ Test 24 (Stage 2-C: Evidence from different selector discarded, 13.73:1 not contaminating CTA finding) passed.');
+
+  // Test 25 — Stage 2 - A: SAME WCAG criterion but DIFFERENT selectors -> 2 separate findings
+  // WCAG 1.4.3 for a:nth-of-type(1) and WCAG 1.4.3 for button:nth-of-type(2) must NOT be merged.
+  const twoSelectorsFindings: InputAuditFinding[] = [
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste (Minimo)',
+      description: 'Contrast fail on link.',
+      evidence: [{ type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '2.32:1', selector: 'a:nth-of-type(1)' }],
+      affectedElement: { tag: 'a', selector: 'a:nth-of-type(1)' },
+      iteration: 1,
+    },
+    {
+      findingGroup: 'accessibility',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      wcagCriterion: 'WCAG 1.4.3 Contraste minimo',
+      description: 'Contrast fail on button.',
+      evidence: [{ type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '3.5:1', selector: 'button:nth-of-type(2)' }],
+      affectedElement: { tag: 'button', selector: 'button:nth-of-type(2)' },
+      iteration: 1,
+    },
+  ];
+  const twoSelectorsResult = auditMetricsService.deduplicateFindings(twoSelectorsFindings);
+  if (twoSelectorsResult.length !== 2) {
+    console.error(`❌ Test 25 (Stage 2-A) Failed: Same WCAG criterion but different selectors must produce 2 findings, got ${twoSelectorsResult.length}`);
+    process.exit(1);
+  }
+  console.log('✅ Test 25 (Stage 2-A: Same WCAG criterion + different selectors -> 2 independent findings) passed.');
+
+  // Test 26 — Stage 2 - E: N-01 SPA scenario
+  // When EvidenceGate receives a N-01 FAIL with evidence of URL non-change but also observable
+  // SPA content change, the finding must NOT be automatically created as FAIL by the system.
+  // This test validates the normalizeCriterionKey for Nielsen codes.
+  const n01Findings: InputAuditFinding[] = [
+    {
+      findingGroup: 'ux',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      heuristicCode: 'N-01',
+      heuristicName: 'Visibilidad del estado del sistema',
+      description: 'URL did not change after click on SPA link.',
+      evidence: [
+        { type: 'INTERACTION', property: 'url', value: 'https://example.com/', selector: 'document' },
+      ],
+      affectedElement: { tag: 'a', selector: 'a.spa-link' },
+      iteration: 1,
+    },
+    {
+      findingGroup: 'ux',
+      status: 'FAIL',
+      severity: 'high',
+      confidence: 'high',
+      heuristicCode: 'N-01 Visibilidad del estado del sistema',
+      description: 'Duplicate N-01 from AI with slightly different code format.',
+      evidence: [
+        { type: 'INTERACTION', property: 'url', value: 'https://example.com/', selector: 'document' },
+      ],
+      affectedElement: { tag: 'a', selector: 'a.spa-link' },
+      iteration: 1,
+    },
+  ];
+  const n01Result = auditMetricsService.deduplicateFindings(n01Findings);
+  if (n01Result.length !== 1) {
+    console.error(`❌ Test 26 (Stage 2-E) Failed: N-01 typographic variants must deduplicate to 1 finding, got ${n01Result.length}`);
+    process.exit(1);
+  }
+  console.log('✅ Test 26 (Stage 2-E: N-01 typographic deduplication -> 1 finding) passed.');
+
+  console.log('\n🎉 ALL 20 Subetapa 3D + 6 Stage 2 Deduplication & Evidence Priority Tests passed successfully!');
   process.exit(0);
 }
 

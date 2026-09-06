@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { aiService } from './ai.service';
 import { UxAnalysisInputSchema } from './contracts/ai.contracts';
 import { validate } from '@/shared/middleware/validate.middleware';
+import { authenticate } from '@/shared/middleware/authenticate.middleware';
 import { Router } from 'express';
 
 export class AiController {
@@ -20,6 +21,10 @@ export const aiController = new AiController();
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+// Triggers a real Gemini call — must not be reachable anonymously (cost +
+// bypasses the evaluation/ownership model entirely).
+router.use(authenticate);
 
 router.post(
   '/analyze-ux',

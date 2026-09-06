@@ -6,6 +6,7 @@ import {
   GetEvaluationsQuery,
 } from './dto/evaluation.dto';
 import { HttpError } from '@/shared/errors/HttpError';
+import { AppError } from '@/shared/errors/AppError';
 import { EVALUATION_STATUS, AUDIT_STATUS } from '@/config/constants';
 
 import { evaluatorProfileService } from '@/modules/evaluator-profiles/evaluator-profile.service';
@@ -20,14 +21,65 @@ import { ruleEngine } from './services/rule-engine.service';
 import { auditEngine } from './services/audit-engine.service';
 import { V2AIOutputDecision } from '@/modules/ai/contracts/ai.contracts';
 import { snapshotEvidenceService } from '@/modules/snapshots/snapshot-evidence.service';
+import { calculateDynamicMaxIterations } from './services/dynamic-iterations.service';
+
+export interface ActionExecutionOutcome {
+  previousAction: { actionType: string; description: string; result: 'success' | 'failure' };
+  blockingError: string | null;
+  /** Non-null only on success: the step description to append to completedSteps. */
+  completedStep: string | null;
+  /** Non-null only on success: the objective for the next iteration. */
+  nextObjective: string | null;
+}
+
+/**
+ * Pure mapping from an AutomationService.executeAction() result to the
+ * flow-state bookkeeping for the current iteration.
+ *
+ * executeAction() reports failures via `{ success: false, error }` rather
+ * than throwing (see automation.service.ts), so this MUST be based on
+ * `actionResult.success` — recording a failed action as `result: 'success'`
+ * would silently defeat RuleEngine's Rule 0 (stop on failed previous action)
+ * and let the loop continue as if the page had actually changed.
+ *
+ * Extracted as a standalone pure function so this specific mapping is unit
+ * testable without a live browser/DB/Gemini.
+ */
+export function resolveActionOutcome(
+  actionResult: { success: boolean; error?: string },
+  currentAction: { actionType: string; rationale: string; targetElement: { value?: string } | null },
+  currentObjective: string,
+): ActionExecutionOutcome {
+  if (actionResult.success) {
+    return {
+      previousAction: {
+        actionType: currentAction.actionType,
+        description: currentAction.rationale,
+        result: 'success',
+      },
+      blockingError: null,
+      completedStep: currentObjective,
+      nextObjective: `Después de realizar ${currentAction.actionType} en ${currentAction.targetElement?.value}`,
+    };
+  }
+
+  return {
+    previousAction: {
+      actionType: currentAction.actionType,
+      description: `Failed to execute: ${actionResult.error || 'unknown error'}`,
+      result: 'failure',
+    },
+    blockingError: `Action failed: ${actionResult.error || 'unknown error'}`,
+    completedStep: null,
+    nextObjective: null,
+  };
+}
 
 /**
  * EvaluationService — Business logic for evaluation lifecycle management.
  *
  * Orchestrates the V2 loop (stateful browser interaction, ContextBuilder, RuleEngine, Gemini AI, persistence).
  */
-import { calculateDynamicMaxIterations } from './services/dynamic-iterations.service';
-
 export class EvaluationService {
   constructor() {
     // Registramos el manejador asíncrono para el tipo 'evaluation'
@@ -70,6 +122,11 @@ export class EvaluationService {
    * Ejecución real asíncrona de fondo coordinada por el JobRunner (Bucle Iterativo V2).
    */
   private async runEvaluation(userId: string, evaluationId: string, dto: CreateEvaluationDto): Promise<void> {
+    let currentIteration = 1;
+    let completedSteps: string[] = [];
+    let previousActions: Array<{ actionType: string; description: string; result: 'success' | 'failure' }> = [];
+    let blockingError: string | null = null;
+
     try {
       // 1. Validar y obtener Perfil
       const profile = await evaluatorProfileService.findById(userId, dto.evaluatorProfileId);
@@ -82,12 +139,8 @@ export class EvaluationService {
       await automationService.startSession(evaluationId, dto.url);
 
       let maxIterations = 8;
-      let currentIteration = 1;
       let flowCanContinue = true;
-      let completedSteps: string[] = [];
-      let previousActions: Array<{ actionType: string; description: string; result: 'success' | 'failure' }> = [];
       let currentObjective = 'Navegar e iniciar exploración';
-      let blockingError: string | null = null;
 
       // Metrics tracking for Phase 1
       let phase1Calls = 0;
@@ -226,31 +279,26 @@ export class EvaluationService {
         const currentAction = decisionResult.suggestedAction;
 
         if (decisionResult.flowControl.recommendedNextStep === 'executeSuggestedAction' && currentAction && currentAction.targetElement) {
-          try {
-            console.log(`[EvaluationService] Executing browser action: ${currentAction.actionType} on selector ${currentAction.targetElement.value}`);
-            await automationService.executeAction(evaluationId, {
-              actionType: currentAction.actionType,
-              selector: currentAction.targetElement.value,
-              value: currentAction.inputData ?? '',
-              targetElement: currentAction.targetElement,
-            });
-            
-            // Log previous actions for next iteration
-            previousActions.push({
-              actionType: currentAction.actionType,
-              description: currentAction.rationale,
-              result: 'success',
-            });
-            completedSteps.push(currentObjective);
-            currentObjective = `Después de realizar ${currentAction.actionType} en ${currentAction.targetElement.value}`;
-          } catch (err: any) {
-            console.error(`[EvaluationService] Failed to execute browser action:`, err);
-            previousActions.push({
-              actionType: currentAction.actionType,
-              description: `Failed to execute: ${err.message || String(err)}`,
-              result: 'failure',
-            });
-            blockingError = `Action failed: ${err.message || String(err)}`;
+          console.log(`[EvaluationService] Executing browser action: ${currentAction.actionType} on selector ${currentAction.targetElement.value}`);
+          const actionResult = await automationService.executeAction(evaluationId, {
+            actionType: currentAction.actionType,
+            selector: currentAction.targetElement.value,
+            value: currentAction.inputData ?? '',
+            targetElement: currentAction.targetElement,
+          });
+
+          if (!actionResult.success) {
+            console.error(`[EvaluationService] Action execution failed:`, actionResult.error);
+          }
+
+          const outcome = resolveActionOutcome(actionResult, currentAction, currentObjective);
+          previousActions.push(outcome.previousAction);
+          blockingError = outcome.blockingError;
+          if (outcome.completedStep !== null) {
+            completedSteps.push(outcome.completedStep);
+          }
+          if (outcome.nextObjective !== null) {
+            currentObjective = outcome.nextObjective;
           }
         } else if (decisionResult.flowControl.recommendedNextStep === 'stopFlow' || !currentAction) {
           flowCanContinue = false;
@@ -271,18 +319,13 @@ export class EvaluationService {
         currentIteration++;
       }
 
-      // 4. Cerrar sesión del navegador
-      console.log(`[EvaluationService] Closing browser session for evaluation ${evaluationId}`);
-      await automationService.closeSession(evaluationId);
-
-      // 5. Marcar exploración como COMPLETED y la auditoría de Fase 2 como RUNNING
+      // 4. Marcar exploración como COMPLETED y la auditoría de Fase 2 como RUNNING
       await evaluationRepository.update(evaluationId, userId, {
         status: EVALUATION_STATUS.COMPLETED,
         auditStatus: AUDIT_STATUS.RUNNING,
       });
 
-      // 6. Disparar Auditoría Asíncrona Final (AuditEngine) — desacoplada del hilo principal
-      // P-03 fix: se usa setImmediate para ejecutarla en background, sin bloquear el completado.
+      // 5. Disparar Auditoría Asíncrona Final (AuditEngine) — desacoplada del hilo principal
       const capturedTitle = dto.title;
       const phase1Metrics = {
         phase1Calls,
@@ -297,18 +340,35 @@ export class EvaluationService {
           await auditEngine.performAudit(evaluationId, capturedTitle, phase1Metrics);
         } catch (auditError) {
           console.error(`[EvaluationService] ⚠️ Background audit failed for evaluation ${evaluationId}:`, auditError);
-          // Audit failure is non-fatal: exploration completed successfully.
         }
       });
 
     } catch (error: any) {
       console.error(`[EvaluationService] ❌ Evaluation ${evaluationId} failed:`, error);
+      
+      const statusCode = error instanceof AppError ? error.statusCode : (error?.statusCode || 500);
+      const isAiError = statusCode === 503 || statusCode === 429 || statusCode === 502 || statusCode === 504 || (error?.message || '').toLowerCase().includes('ai');
+      const errorPrefix = isAiError ? `[AI_PROVIDER_ERROR ${statusCode}]` : `[EVALUATION_ERROR ${statusCode}]`;
+      const formattedErrorMessage = `${errorPrefix} ${error?.message || String(error)} (failed at iteration ${currentIteration})`;
+
+      await evaluationRepository.update(evaluationId, userId, {
+        status: EVALUATION_STATUS.FAILED,
+        auditStatus: AUDIT_STATUS.FAILED,
+        flowState: {
+          currentStep: currentIteration,
+          completedSteps,
+          previousActions,
+          blockingError: formattedErrorMessage,
+        },
+      });
+    } finally {
+      // 6. Cerrar sesión del navegador de forma garantizada independientemente del resultado
+      console.log(`[EvaluationService] Closing browser session for evaluation ${evaluationId}`);
       try {
         await automationService.closeSession(evaluationId);
       } catch (closeErr) {
-        console.error('Failed to close session on error cleanup:', closeErr);
+        console.warn(`[EvaluationService] Error closing session for ${evaluationId} in cleanup:`, closeErr);
       }
-      await evaluationRepository.update(evaluationId, userId, { status: EVALUATION_STATUS.FAILED });
     }
   }
 

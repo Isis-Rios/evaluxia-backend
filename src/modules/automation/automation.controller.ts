@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction, Router } from 'express';
 import { automationService } from './automation.service';
 import { validate } from '@/shared/middleware/validate.middleware';
+import { authenticate } from '@/shared/middleware/authenticate.middleware';
 import { z } from 'zod';
 
 const NavigateSchema = z.object({
@@ -41,6 +42,12 @@ export const automationController = new AutomationController();
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
 const router = Router();
+
+/**
+ * All automation routes operate a real Playwright/Chromium session against a
+ * caller-supplied URL — they must not be reachable anonymously.
+ */
+router.use(authenticate);
 
 /**
  * POST /api/v1/automation/navigate      → Navigate and get metadata

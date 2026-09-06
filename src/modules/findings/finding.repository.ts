@@ -6,12 +6,22 @@ import { CreateFindingDto, UpdateFindingDto, GetFindingsQuery } from './dto/find
  * FindingRepository — Encapsulates all Mongoose operations for Finding.
  */
 export class FindingRepository {
+  /**
+   * `ownedEvaluationIds` scopes the query to a specific set of evaluations
+   * (used when the caller did not filter by a single evaluationId, so we
+   * must not return findings belonging to other users' evaluations).
+   */
   async findAll(
     query: GetFindingsQuery,
+    ownedEvaluationIds?: string[],
   ): Promise<{ data: IFinding[]; total: number }> {
     const filter: Record<string, unknown> = {};
 
-    if (query.evaluationId) filter['evaluationId'] = query.evaluationId;
+    if (query.evaluationId) {
+      filter['evaluationId'] = query.evaluationId;
+    } else if (ownedEvaluationIds) {
+      filter['evaluationId'] = { $in: ownedEvaluationIds };
+    }
     if (query.findingGroup) filter['findingGroup'] = query.findingGroup;
     if (query.severity) filter['severity'] = query.severity;
 

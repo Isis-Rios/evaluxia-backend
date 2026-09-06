@@ -230,7 +230,7 @@ function runFindingContractTests() {
   // Test 16: evidence DOM_ATTRIBUTE valid
   const attrFinding = {
     ...validFailInput,
-    evidence: [{ type: 'DOM_ATTRIBUTE', attribute: 'alt', value: '', selector: 'img.hero' }],
+    evidence: [{ type: 'DOM_ATTRIBUTE', attribute: 'alt', value: 'missing', selector: 'img.hero' }],
   };
   const test16Validation = V2AuditFindingSchema.safeParse(attrFinding);
   if (!test16Validation.success || test16Validation.data.evidence[0].type !== 'DOM_ATTRIBUTE') {

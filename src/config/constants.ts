@@ -41,3 +41,14 @@ export const BROWSER_CONFIG = {
   timeout: 30_000,
   viewport: { width: 1280, height: 720 },
 } as const;
+
+// AI Resilience / Retry configuration defaults
+export const AI_RETRY_CONFIG = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  backoffFactor: 2,
+  maxDelayMs: 10000,
+  jitterMs: 200,
+} as const;
+
+export type AiRetryConfig = typeof AI_RETRY_CONFIG;

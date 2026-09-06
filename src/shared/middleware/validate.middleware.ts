@@ -16,8 +16,10 @@ export function validate(
   schema: ZodSchema,
   target: ValidateTarget = 'body',
 ) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    const result = schema.safeParse(req[target]);
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    // safeParseAsync supports schemas with async refinements (e.g. the SSRF
+    // check on CreateEvaluationSchema.url) as well as plain sync schemas.
+    const result = await schema.safeParseAsync(req[target]);
 
     if (!result.success) {
       const error = result.error as ZodError;

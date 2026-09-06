@@ -304,7 +304,7 @@ Respond ONLY with valid JSON matching this exact structure:
         "tag": "<tag>",
         "text": "<text>",
         "selector": "<selector>",
-        "role": "<role>"
+        "role": "<role or null if element has no ARIA role>"
       },
       "impact": "<user impact explanation>",
       "recommendation": "<actionable fix recommendation for developer>",
@@ -312,6 +312,50 @@ Respond ONLY with valid JSON matching this exact structure:
     }
   ]
 }
+
+CRITICAL RULE FOR EVIDENCE:
+Each item in the 'evidence' array MUST use EXCLUSIVELY one of these 6 exact string values for 'type':
+- DOM_ATTRIBUTE (for HTML attributes like alt, href, aria-label, role, disabled)
+- COMPUTED_STYLE (for CSS styles like color, background-color, contrastRatio)
+- ACCESSIBILITY_TREE (for ARIA node names, roles, screen reader tree)
+- SCREENSHOT (for visual screenshot evidence)
+- INTERACTION (for URL location, navigation steps, form actions)
+- HEADING_STRUCTURE (for document heading hierarchy)
+
+Do NOT invent custom type names such as CURRENT_URL or BUTTON_PROPERTIES. Use 'property' to specify the concrete attribute observed (e.g. type: "INTERACTION", property: "url", value: "...").
+
+Note for affectedElement: fields like tag, text, selector, role, ariaLabel, href, id can be omitted or set to null if not available for the target element.
+
+---
+
+DETERMINISTIC EVIDENCE PRIORITY:
+The computedStyles[] bundle already contains backend-calculated contrast ratios computed with the
+W3C sRGB formula. These are authoritative measurements. You MUST NOT re-calculate or estimate
+contrast ratios yourself. If you reference color contrast in a finding, use ONLY the values
+already present in the evidence bundle (contrastRatio field). Do not introduce your own numeric
+ratio estimate.
+
+EVIDENCE SELECTOR COHERENCE:
+Each item in the 'evidence[]' array for a given finding MUST reference ONLY the element identified
+by that finding's 'affectedElement.selector'. Do NOT include evidence items whose selector
+corresponds to a different DOM element. If you observe a problem on element A, do not add evidence
+from element B to the same finding, even if both share the same WCAG criterion.
+
+---
+
+N-01 SPECIFIC CONSTRAINT (Visibilidad del estado del sistema):
+Report FAIL for N-01 ONLY when ALL of the following conditions are confirmed from the evidence:
+  1. A user action (CLICK, SUBMIT, or TYPE+CLICK) was executed on an interactive element.
+  2. The interactive element explicitly indicated navigation to a different resource (href to a
+     different path, a submit button, or a form action).
+  3. The URL remained unchanged across snapshots AND no visible DOM content change (new headings,
+     new sections, new form results) is observable between the before/after snapshots.
+  4. No loading indicator, spinner, disabled state, or transition feedback is visible in the DOM.
+
+Do NOT declare FAIL for N-01 solely because the URL did not change. Client-side routing, hash
+navigation, SPA content injection, and AJAX updates are all valid patterns that do not change the
+URL. If it cannot be determined whether the page is a SPA or uses dynamic content updates,
+classify as NOT_EVALUABLE instead of FAIL.
 `.trim();
   }
 

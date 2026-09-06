@@ -8,17 +8,18 @@ import { CreateFindingDto, UpdateFindingDto, GetFindingsQuery } from './dto/find
 export class FindingController {
   async findAll(req: Request, res: Response): Promise<void> {
     const query = req.query as unknown as GetFindingsQuery;
-    const result = await findingService.findAll(query);
+    const result = await findingService.findAll(req.user!.userId, query);
     res.status(200).json({ status: 'success', ...result });
   }
 
   async findById(req: Request, res: Response): Promise<void> {
-    const finding = await findingService.findById(req.params['id'] as string);
+    const finding = await findingService.findById(req.user!.userId, req.params['id'] as string);
     res.status(200).json({ status: 'success', data: finding });
   }
 
   async findByEvaluationId(req: Request, res: Response): Promise<void> {
     const findings = await findingService.findByEvaluationId(
+      req.user!.userId,
       req.params['evaluationId'] as string,
     );
     res.status(200).json({ status: 'success', data: findings, total: findings.length });
@@ -26,18 +27,18 @@ export class FindingController {
 
   async create(req: Request, res: Response): Promise<void> {
     const dto = req.body as CreateFindingDto;
-    const finding = await findingService.create(dto);
+    const finding = await findingService.create(req.user!.userId, dto);
     res.status(201).json({ status: 'success', data: finding });
   }
 
   async update(req: Request, res: Response): Promise<void> {
     const dto = req.body as UpdateFindingDto;
-    const finding = await findingService.update(req.params['id'] as string, dto);
+    const finding = await findingService.update(req.user!.userId, req.params['id'] as string, dto);
     res.status(200).json({ status: 'success', data: finding });
   }
 
   async delete(req: Request, res: Response): Promise<void> {
-    await findingService.delete(req.params['id'] as string);
+    await findingService.delete(req.user!.userId, req.params['id'] as string);
     res.status(204).send();
   }
 }

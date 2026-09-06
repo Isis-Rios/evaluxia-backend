@@ -128,7 +128,10 @@ export class AuditEngine {
       const validatedAiFindings = evidenceGateService.processAiFindings(rawAiAuditFindings);
       console.log(`[AuditEngine] 🛡️ EvidenceGate processed AI findings: ${validatedAiFindings.length} valid findings.`);
 
-      // 7. Unificar todos los hallazgos en un arreglo para cálculo determinístico de métricas
+      // 7. Unificar todos los hallazgos en un arreglo para cálculo determinístico de métricas.
+      // INVARIANT: deterministicFindings MUST precede validatedAiFindings so that
+      // AuditMetricsService.deduplicateFindings() seeds the Map with deterministic measurements
+      // and applies deterministic-priority evidence fusion for any duplicate criterion+selector.
       const allRawFindings: InputAuditFinding[] = [
         ...deterministicFindings.map((df) => ({
           findingGroup: df.findingGroup,
@@ -178,7 +181,7 @@ export class AuditEngine {
       // 9. Persistir Hallazgos Consolidados (FAIL) en BD
       for (const cf of metrics.consolidatedFindings) {
         if (cf.status === 'FAIL') {
-          await findingService.create({
+          await findingService.create(userIdStr, {
             evaluationId: evaluationId as any,
             iteration: cf.iteration,
             findingGroup: cf.findingGroup,

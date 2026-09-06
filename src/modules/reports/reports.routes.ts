@@ -11,7 +11,7 @@ const router = Router();
 router.get('/evaluation/:evaluationId', authenticate, async (req, res, next) => {
   try {
     const evaluationId = req.params.evaluationId as string;
-    const report = await reportService.getReportForEvaluation(evaluationId);
+    const report = await reportService.getReportForEvaluation(req.user!.userId, evaluationId);
     res.status(200).json({ status: 'success', data: report });
   } catch (error) {
     next(error);

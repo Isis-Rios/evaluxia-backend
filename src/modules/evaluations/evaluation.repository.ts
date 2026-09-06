@@ -33,6 +33,16 @@ export class EvaluationRepository {
     return Evaluation.findOne({ _id: id, userId });
   }
 
+  /**
+   * Returns the ids of every evaluation owned by `userId`. Used to scope
+   * cross-evaluation queries (e.g. an unfiltered findings listing) to
+   * resources the caller actually owns.
+   */
+  async findIdsByUserId(userId: string): Promise<string[]> {
+    const docs = await Evaluation.find({ userId }).select('_id').lean();
+    return docs.map((doc) => doc._id.toString());
+  }
+
   async create(userId: string, dto: CreateEvaluationDto): Promise<IEvaluation> {
     return Evaluation.create({ ...dto, userId });
   }

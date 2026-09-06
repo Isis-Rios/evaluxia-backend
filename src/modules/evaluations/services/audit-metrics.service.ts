@@ -95,14 +95,23 @@ export class AuditMetricsService {
   }
 
   /**
-   * Deduplicates findings across iterations using problem identity key: ${criterion}_${selector}.
-   * Consolidates evidence and retains all observed iterations/screenshots.
+   * Deduplicates findings across iterations using a normalized problem identity key:
+   *   normalizeCriterionKey(criterion) + "_" + selector
+   *
+   * Normalization extracts the canonical WCAG code (e.g. "WCAG 1.4.3") or Nielsen code
+   * (e.g. "N-01") so that typographic variants from DeterministicAnalyzer and Gemini
+   * resolve to the same dedup key.
+   *
+   * INVARIANT: deterministicFindings MUST precede validatedAiFindings in the input array
+   * (guaranteed by AuditEngine). This ensures the deterministic finding is always the Map
+   * seed and its measurements take priority during evidence fusion.
    */
   public deduplicateFindings(rawFindings: InputAuditFinding[]): ConsolidatedFinding[] {
     const map = new Map<string, ConsolidatedFinding>();
 
     for (const f of rawFindings) {
-      const criterionKey = f.wcagCriterion || f.heuristicCode || f.heuristic || f.description;
+      const rawCriterion = f.wcagCriterion || f.heuristicCode || f.heuristic || f.description;
+      const criterionKey = this.normalizeCriterionKey(rawCriterion);
       const selectorKey = f.affectedElement?.selector || f.affectedElement?.tag || 'global';
       const key = `${criterionKey}_${selectorKey}`;
 
@@ -120,21 +129,94 @@ export class AuditMetricsService {
         if (f.screenshotUrl && !existing.screenshotUrls.includes(f.screenshotUrl)) {
           existing.screenshotUrls.push(f.screenshotUrl);
         }
-        // Merge evidence items cleanly
+        // Merge evidence with selector-awareness and deterministic-priority.
         if (f.evidence && f.evidence.length > 0) {
-          existing.evidence = existing.evidence || [];
-          for (const evItem of f.evidence) {
-            const evKey = `${evItem.type}_${evItem.selector}_${evItem.property}_${evItem.value}`;
-            const exists = existing.evidence.some(
-              (e) => `${e.type}_${e.selector}_${e.property}_${e.value}` === evKey,
-            );
-            if (!exists) existing.evidence.push(evItem);
-          }
+          existing.evidence = this.mergeEvidence(
+            existing.evidence || [],
+            f.evidence,
+            selectorKey,
+          );
         }
       }
     }
 
     return Array.from(map.values());
+  }
+
+  /**
+   * Normalizes a criterion string to its canonical code for deduplication.
+   * Examples:
+   *   "WCAG 1.4.3 Contraste (Minimo)"  -> "WCAG 1.4.3"
+   *   "WCAG 1.4.3 Contraste minimo"    -> "WCAG 1.4.3"
+   *   "N-01 Visibilidad del estado"    -> "N-01"
+   *   "N-01"                           -> "N-01"
+   * Falls back to lowercased trimmed string if no canonical code is detected.
+   */
+  private normalizeCriterionKey(criterion: string): string {
+    if (!criterion) return 'unknown';
+    const wcagMatch = criterion.match(/WCAG\s+\d+\.\d+\.\d+/i);
+    if (wcagMatch) return wcagMatch[0].toUpperCase().trim();
+    const nielsenMatch = criterion.match(/N-\d{2}/i);
+    if (nielsenMatch) return nielsenMatch[0].toUpperCase().trim();
+    return criterion.toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * Merges incoming evidence items into the existing evidence array with two guards:
+   *
+   * Guard 1 - Selector coherence: only evidence whose selector matches the consolidated
+   * finding's affectedElement selector (or is a global anchor like 'document'/'body') is
+   * incorporated. Evidence from a different selector is discarded, preventing
+   * cross-element contamination (e.g. a 13.73:1 ratio from another element bleeding
+   * into the finding for a:nth-of-type(1)).
+   *
+   * Guard 2 - Deterministic priority: if the existing evidence already contains a
+   * contrastRatio measurement for the consolidated selector, any incoming contrastRatio
+   * evidence for that selector is discarded. This preserves the backend-calculated ratio
+   * (e.g. 2.32:1) over Gemini's re-estimate (e.g. 3.12:1).
+   *
+   * Compatible contextual evidence (color, backgroundColor, etc.) from the same selector
+   * is still fused to provide richer context.
+   */
+  private mergeEvidence(
+    existing: TechnicalEvidenceItem[],
+    incoming: TechnicalEvidenceItem[],
+    consolidatedSelector: string,
+  ): TechnicalEvidenceItem[] {
+    const hasDeterministicContrastRatio = existing.some(
+      (e) => e.property === 'contrastRatio' &&
+        (e.selector === consolidatedSelector || !e.selector),
+    );
+
+    for (const evItem of incoming) {
+      const itemSelector = evItem.selector;
+
+      // Guard 1: Discard evidence from a different element/selector
+      if (
+        itemSelector &&
+        itemSelector !== consolidatedSelector &&
+        itemSelector !== 'document' &&
+        itemSelector !== 'body'
+      ) {
+        continue;
+      }
+
+      // Guard 2: Discard incoming contrastRatio if a deterministic one already exists
+      if (evItem.property === 'contrastRatio' && hasDeterministicContrastRatio) {
+        continue;
+      }
+
+      // Standard deduplication by exact key
+      const evKey = `${evItem.type}_${evItem.selector}_${evItem.property}_${evItem.value}`;
+      const alreadyPresent = existing.some(
+        (e) => `${e.type}_${e.selector}_${e.property}_${e.value}` === evKey,
+      );
+      if (!alreadyPresent) {
+        existing.push(evItem);
+      }
+    }
+
+    return existing;
   }
 
   /**
@@ -171,7 +253,7 @@ export class AuditMetricsService {
 
       // Process WCAG
       if (f.wcagCriterion) {
-        // Match canonical WCAG criterion name e.g. "WCAG 1.4.3" inside "WCAG 1.4.3 Contraste Mínimo"
+        // Match canonical WCAG criterion name e.g. "WCAG 1.4.3" inside "WCAG 1.4.3 Contraste Minimo"
         const matchedWCAG = SUPPORTED_WCAG_CRITERIA.find((c) => f.wcagCriterion!.includes(c));
         if (matchedWCAG && wcagStatusMap.has(matchedWCAG)) {
           const current = wcagStatusMap.get(matchedWCAG)!;
@@ -220,7 +302,7 @@ export class AuditMetricsService {
     let overallScore: number | null = null;
     if (totalEvaluable > 0) {
       const globalCompliance = (totalPass / totalEvaluable) * 100;
-      
+
       // Calculate severity deductions normalized over evaluated criteria
       let totalSeverityPenalty = 0;
       for (const [_, val] of nielsenStatusMap) {

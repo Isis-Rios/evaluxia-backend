@@ -3,7 +3,7 @@ import {
   calculateContrastRatio,
 } from '../services/deterministic-analyzer.service';
 import { evidenceGateService } from '../services/evidence-gate.service';
-import { V2AuditFinding } from '@/modules/ai/contracts/ai.contracts';
+import { V2AuditFinding, V2AuditFindingSchema } from '@/modules/ai/contracts/ai.contracts';
 import { ISnapshotEvidence } from '@/modules/snapshots/snapshot-evidence.model';
 
 function runEvidenceAuditEngineTests() {
@@ -350,7 +350,36 @@ function runEvidenceAuditEngineTests() {
   // Test 22-25: NOT_EVALUABLE and Evidence Gate assertions
   console.log('✅ Tests 22-25 (NOT_EVALUABLE non-penalization & Evidence Gate blocking) passed.');
 
-  console.log('\n🎉 ALL 25 Mandatory Tests + 7 Controlled Fixture Tests (A to G) passed successfully!');
+  // Test 26: Controlled AI finding fixture with null affectedElement fields
+  const nullElementFindingInput = {
+    findingGroup: 'accessibility',
+    type: 'wcag',
+    status: 'FAIL',
+    severity: 'medium',
+    confidence: 'high',
+    wcagCriterion: 'WCAG 4.1.2 Nombre, función y valor',
+    description: 'Elemento div sin rol explícito.',
+    evidence: [{ type: 'DOM_ATTRIBUTE', selector: 'div.banner', attribute: 'role', value: null }],
+    affectedElement: {
+      tag: 'div',
+      text: null,
+      selector: 'div.banner',
+      role: null,
+      ariaLabel: null,
+      href: null,
+      id: null,
+    },
+    recommendation: 'Asignar un atributo role explícito o etiqueta ARIA.',
+  };
+  const parsedFinding = V2AuditFindingSchema.parse(nullElementFindingInput);
+  const processed26 = evidenceGateService.processAiFindings([parsedFinding]);
+  if (processed26.length !== 1 || processed26[0].status !== 'FAIL') {
+    console.error('❌ Test 26 Failed: Null affectedElement fields were blocked by EvidenceGate');
+    process.exit(1);
+  }
+  console.log('✅ Test 26 (Controlled AI finding fixture with null affectedElement fields processed cleanly) passed.');
+
+  console.log('\n🎉 ALL 26 Mandatory Tests + 7 Controlled Fixture Tests (A to G) passed successfully!');
   process.exit(0);
 }
 

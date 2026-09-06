@@ -88,7 +88,7 @@ async function runE2eValidation3E() {
     const dbSnapshots = await snapshotEvidenceRepository.findByEvaluationId(evalId);
 
     // 2. Query via Backend API Services
-    const apiReport = await reportService.getReportForEvaluation(evalId);
+    const apiReport = await reportService.getReportForEvaluation(userIdStr, evalId);
     const apiSnapshots = await snapshotEvidenceService.getEvidencesForEvaluation(evalId);
 
     console.log('\n================================================================================');

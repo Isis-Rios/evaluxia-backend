@@ -2,6 +2,7 @@ import {
   V2AIInputContextSchema,
   V2AIOutputDecisionSchema,
   V2AuditOutputSchema,
+  TechnicalEvidenceItemSchema,
 } from '../contracts/ai.contracts';
 import { ruleEngine } from '@/modules/evaluations/services/rule-engine.service';
 import { contextBuilder } from '@/modules/evaluations/services/context-builder.service';
@@ -177,7 +178,7 @@ function runTests() {
         confidence: 'high',
         wcagCriterion: 'WCAG 1.1.1 Contenido no textual',
         description: 'Primary image missing alt attribute.',
-        evidence: [{ type: 'DOM_ATTRIBUTE', selector: 'img.hero', attribute: 'alt', value: '' }],
+        evidence: [{ type: 'DOM_ATTRIBUTE', selector: 'img.hero', attribute: 'alt', value: 'missing' }],
         recommendation: 'Provide alt text describing product.',
       },
     ],
@@ -189,6 +190,136 @@ function runTests() {
     process.exit(1);
   }
   console.log('✅ V2 Audit Output Schema (Phase 2) validated successfully.');
+
+  // Test Case 5b: Null-safety validation of AffectedElementSchema in V2AuditOutputSchema
+  const auditOutputWithNullAffectedElement = {
+    overallScore: 85,
+    executiveSummary: 'Audit summary with null properties in affectedElement.',
+    findings: [
+      {
+        findingGroup: 'accessibility',
+        type: 'wcag',
+        status: 'FAIL',
+        severity: 'medium',
+        confidence: 'high',
+        wcagCriterion: 'WCAG 4.1.2 Nombre, función y valor',
+        description: 'Generic container element lacking role semantics.',
+        evidence: [{ type: 'DOM_ATTRIBUTE', selector: 'div.hero-banner', property: 'role', value: null }],
+        affectedElement: {
+          tag: 'div',
+          text: null,
+          selector: 'div.hero-banner',
+          role: null,
+          ariaLabel: null,
+          href: null,
+          id: null,
+          attributes: null,
+        },
+        recommendation: 'Add explicit role or ARIA attributes.',
+      },
+    ],
+  };
+
+  const nullSafetyValidation = V2AuditOutputSchema.safeParse(auditOutputWithNullAffectedElement);
+  if (!nullSafetyValidation.success) {
+    console.error('❌ AffectedElementSchema null-safety validation failed:', nullSafetyValidation.error.message);
+    process.exit(1);
+  }
+  console.log('✅ AffectedElementSchema null-safety (role: null, text: null, etc.) validated successfully.');
+
+  // Test Case 5c: Evidence Type Alias Normalization & Semantic Preservation Test
+  const auditOutputWithEvidenceAliases = {
+    overallScore: 80,
+    executiveSummary: 'Audit summary with evidence aliases.',
+    findings: [
+      {
+        findingGroup: 'accessibility',
+        type: 'wcag',
+        status: 'FAIL',
+        severity: 'high',
+        confidence: 'high',
+        wcagCriterion: 'WCAG 2.4.1 Omitir bloques',
+        description: 'No skip link available.',
+        evidence: [
+          { type: 'CURRENT_URL', value: 'https://launchpage.xyz/example', selector: null },
+          { type: 'BUTTON_PROPERTIES', property: 'aria-label', value: 'missing', selector: 'button#btn1' },
+          { type: 'COLOR_CONTRAST', property: 'contrastRatio', value: '2.1:1', selector: 'p.hero' },
+          { type: 'ARIA_SNAPSHOT', property: 'accessibleName', value: '0', selector: null },
+          { type: 'SCREENSHOT', value: '/uploads/step_1.png', selector: null },
+        ],
+        recommendation: 'Add skip link and fix contrast.',
+      },
+    ],
+  };
+
+  const aliasValidation = V2AuditOutputSchema.safeParse(auditOutputWithEvidenceAliases);
+  if (!aliasValidation.success) {
+    console.error('❌ Evidence type alias validation failed:', aliasValidation.error.message);
+    process.exit(1);
+  }
+  const parsedFinding = aliasValidation.data.findings[0];
+  if (
+    parsedFinding.evidence[0].type !== 'INTERACTION' ||
+    parsedFinding.evidence[0].property !== 'url' ||
+    parsedFinding.evidence[0].selector !== undefined ||
+    parsedFinding.evidence[1].type !== 'DOM_ATTRIBUTE' ||
+    parsedFinding.evidence[1].property !== 'aria-label' ||
+    parsedFinding.evidence[2].type !== 'COMPUTED_STYLE' ||
+    parsedFinding.evidence[2].property !== 'contrastRatio' ||
+    parsedFinding.evidence[3].type !== 'ACCESSIBILITY_TREE' ||
+    parsedFinding.evidence[3].value !== '0' ||
+    parsedFinding.evidence[4].type !== 'SCREENSHOT' ||
+    parsedFinding.evidence[4].selector !== undefined
+  ) {
+    console.error('❌ Evidence type alias mapping, property preservation, or nullish selector failed!');
+    process.exit(1);
+  }
+  console.log('✅ Evidence type alias normalization & superRefine semantic preservation (CURRENT_URL -> INTERACTION, selector: null -> undefined, value: "0" accepted) validated successfully.');
+
+  // Test Case 5d: SuperRefine Strict Validation Tests (Rejecting empty property/value when mandatory)
+  const testCasesSuperRefineRejection = [
+    {
+      name: 'DOM_ATTRIBUTE missing property/attribute',
+      payload: { type: 'DOM_ATTRIBUTE', value: 'missing', selector: 'img' },
+    },
+    {
+      name: 'DOM_ATTRIBUTE empty string property',
+      payload: { type: 'DOM_ATTRIBUTE', property: '   ', value: 'missing' },
+    },
+    {
+      name: 'DOM_ATTRIBUTE empty string value',
+      payload: { type: 'DOM_ATTRIBUTE', property: 'alt', value: '   ' },
+    },
+    {
+      name: 'COMPUTED_STYLE missing property',
+      payload: { type: 'COMPUTED_STYLE', value: '2.32:1' },
+    },
+    {
+      name: 'COMPUTED_STYLE missing value',
+      payload: { type: 'COMPUTED_STYLE', property: 'contrastRatio' },
+    },
+    {
+      name: 'INTERACTION missing both property and value',
+      payload: { type: 'INTERACTION', selector: 'window' },
+    },
+    {
+      name: 'Unknown evidence type alias',
+      payload: { type: 'TOTALLY_UNKNOWN_TYPE', value: 'some value' },
+    },
+    {
+      name: 'Empty evidence type',
+      payload: { type: '   ', value: 'some value' },
+    },
+  ];
+
+  for (const tc of testCasesSuperRefineRejection) {
+    const res = TechnicalEvidenceItemSchema.safeParse(tc.payload);
+    if (res.success) {
+      console.error(`❌ SuperRefine failed to reject invalid evidence item [${tc.name}]:`, JSON.stringify(res.data));
+      process.exit(1);
+    }
+  }
+  console.log('✅ SuperRefine strict validation (rejecting empty property/value, unknown type, empty type) validated successfully.');
 
   // Test Case 6: ContextBuilder Sliding Window Test (Keep last 3 actions)
   const dummyProfile: any = {

@@ -1,5 +1,10 @@
 import { BrowserManager } from '@/infrastructure/playwright/browser.manager';
 import { AppError } from '@/shared/errors/AppError';
+import {
+  assertSafeUrl,
+  NON_NETWORK_PROTOCOLS,
+  UnsafeUrlError,
+} from '@/shared/security/url-guard';
 import { Page } from 'playwright';
 import fs from 'fs';
 import path from 'path';
@@ -15,6 +20,7 @@ import {
 } from '@/modules/snapshots/snapshot-evidence.model';
 
 export interface InteractiveElement {
+  selector?: string;
   type: 'button' | 'input' | 'link' | 'select' | 'checkbox' | 'radio' | 'textarea' | 'image' | 'other';
   text: string | null;
   ariaLabel: string | null;
@@ -61,15 +67,68 @@ export class AutomationService {
   }
 
   /**
+   * SSRF guard: installs a request-interception handler on the page so that
+   * every request it makes — the initial navigation, redirects, dynamic
+   * NAVIGATE actions proposed by RuleEngine/AI, and any sub-resource the
+   * target page itself triggers — is validated before Chromium is allowed to
+   * connect. Re-checking per-request (rather than only once at DTO
+   * validation time) is what actually protects against redirects and
+   * DNS-rebinding between the initial check and the real navigation.
+   */
+  private async installNetworkGuard(page: Page): Promise<void> {
+    await page.route('**/*', async (route) => {
+      const requestUrl = route.request().url();
+
+      let protocol: string;
+      try {
+        protocol = new URL(requestUrl).protocol;
+      } catch {
+        await route.abort('blockedbyclient');
+        return;
+      }
+
+      if (NON_NETWORK_PROTOCOLS.has(protocol)) {
+        await route.continue();
+        return;
+      }
+
+      try {
+        await assertSafeUrl(requestUrl);
+        await route.continue();
+      } catch (err) {
+        console.warn(
+          `[AutomationService] Blocked unsafe request: ${requestUrl} — ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        await route.abort('blockedbyclient');
+      }
+    });
+  }
+
+  /**
    * Starts a new stateful browser session for a specific evaluation.
    */
   async startSession(evaluationId: string, url: string): Promise<NavigationResult> {
+    // Re-validate at execution time even if the DTO already checked this URL:
+    // the job may run asynchronously after creation, and DNS can change
+    // between the two checks (DNS rebinding).
+    try {
+      await assertSafeUrl(url);
+    } catch (err) {
+      throw new AppError(
+        err instanceof UnsafeUrlError ? err.message : `Unsafe target URL: ${url}`,
+        400,
+      );
+    }
+
     if (this.activeSessions.has(evaluationId)) {
       await this.closeSession(evaluationId);
     }
 
     const { page, close } = await this.browserManager.newPage();
     this.activeSessions.set(evaluationId, { page, close });
+    await this.installNetworkGuard(page);
 
     const startTime = Date.now();
     try {
@@ -164,6 +223,7 @@ export class AutomationService {
             const isPrimary = className.includes('primary') || className.includes('btn-primary') || typeAttr === 'submit' || el.getAttribute('aria-primary') === 'true';
 
             return {
+              selector: getCssSelector(el),
               type,
               text: text ? text.slice(0, 100) : null,
               ariaLabel: ariaLabel ? ariaLabel.slice(0, 150) : null,
@@ -373,7 +433,26 @@ export class AutomationService {
     }
 
     const { page } = session;
-    const targetSelector = action.selector || action.targetElement?.value;
+    let targetSelector = action.selector || action.targetElement?.value;
+
+    // Resolve semantic match strategies into actionable Playwright selectors
+    if (action.targetElement && action.targetElement.matchStrategy && action.targetElement.matchStrategy !== 'CSS' && action.targetElement.matchStrategy !== 'XPATH') {
+      const strat = action.targetElement.matchStrategy;
+      const val = action.targetElement.value;
+      if (strat === 'LABEL') {
+        targetSelector = `[aria-label="${val}"]`;
+      } else if (strat === 'TEXT') {
+        targetSelector = `text="${val}"`;
+      } else if (strat === 'ROLE') {
+        targetSelector = `[role="${val}"]`;
+      } else if (strat === 'PLACEHOLDER') {
+        targetSelector = `[placeholder="${val}"]`;
+      } else if (strat === 'ALT_TEXT') {
+        targetSelector = `[alt="${val}"]`;
+      } else if (strat === 'TEST_ID') {
+        targetSelector = `[data-testid="${val}"]`;
+      }
+    }
 
     try {
       switch (action.actionType.toUpperCase()) {
@@ -419,6 +498,7 @@ export class AutomationService {
 
         case 'NAVIGATE':
           if (!action.value) throw new Error('NAVIGATE action requires a URL in value');
+          await assertSafeUrl(action.value);
           await page.goto(action.value, { waitUntil: 'networkidle', timeout: 30000 });
           break;
 
