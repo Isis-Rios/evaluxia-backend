@@ -186,12 +186,7 @@ ${JSON.stringify(ctx.technicalContext.visibleDOMSummary, null, 2)}
 Respond ONLY with valid JSON matching this exact structure:
 {
   "evaluationSummary": {
-    "flowCanContinue": true,
-    "notes": "<brief assessment of current screen state>"
-  },
-  "userIntention": {
-    "description": "<what the user persona intends to accomplish with this action>",
-    "derivedFromArchetype": true
+    "flowCanContinue": true
   },
   "suggestedAction": {
     "actionType": "<CLICK|TYPE|SELECT|CHECK|UNCHECK|HOVER|FOCUS|CLEAR|NAVIGATE|STOP_FLOW>",

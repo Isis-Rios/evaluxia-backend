@@ -208,6 +208,10 @@ export class EvaluationService {
         let suggestedAction = ruleEngine.evaluate(context);
         let executionTimeMs = 0;
         let decisionResult: V2AIOutputDecision | null = null;
+        // Real per-iteration Gemini token usage — stays {0, 0} when RuleEngine
+        // resolves the decision (genuinely zero Gemini tokens spent that
+        // iteration), populated from aiCall.usage only on the Gemini path.
+        let iterationTokenUsage = { promptTokens: 0, outputTokens: 0 };
 
         if (suggestedAction) {
           console.log(`[EvaluationService] RuleEngine intercepted and proposed action:`, suggestedAction);
@@ -247,6 +251,7 @@ export class EvaluationService {
           const aiCall = await aiService.makeDecision(context);
           decisionResult = aiCall.result;
           executionTimeMs = aiCall.executionTimeMs;
+          iterationTokenUsage = { promptTokens: aiCall.usage.promptTokens, outputTokens: aiCall.usage.outputTokens };
 
           phase1Calls += 1;
           phase1PromptTokens += aiCall.usage.promptTokens;
@@ -272,7 +277,9 @@ export class EvaluationService {
             confusionProbability: decisionResult.riskAssessment.confusionProbability,
             abandonmentRisk: decisionResult.riskAssessment.abandonmentRisk,
             errorRisk: decisionResult.riskAssessment.errorRisk,
-          }
+          },
+          iterationTokenUsage.promptTokens,
+          iterationTokenUsage.outputTokens,
         );
 
         // 3.8. Ejecutar Acción en Playwright si corresponde

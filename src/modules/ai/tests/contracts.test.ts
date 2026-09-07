@@ -111,6 +111,74 @@ function runTests() {
   }
   console.log('✅ V2 Output Decision Schema (SELECT + Simplified Phase 1) validated successfully.');
 
+  // Test Case 2b (Phase C.1): Gemini response with NO "notes" and NO
+  // "userIntention" at all — this is exactly the reduced shape the Phase 1
+  // prompt now asks for (see ai.service.ts buildV2DecisionPrompt). Confirms
+  // Gemini can respond validly without them, and that suggestedAction /
+  // flowControl work exactly the same as before.
+  const reducedV2Output = {
+    evaluationSummary: {
+      flowCanContinue: true,
+      // no "notes" field at all
+    },
+    // no "userIntention" field at all
+    suggestedAction: {
+      actionType: 'CLICK',
+      targetElement: {
+        matchStrategy: 'CSS',
+        value: 'button#submit',
+      },
+      inputData: null,
+      rationale: 'Único botón visible en la pantalla actual.',
+      confidence: 'high',
+    },
+    flowControl: {
+      isStopper: false,
+      stopperReason: null,
+      recommendedNextStep: 'executeSuggestedAction',
+    },
+  };
+
+  const reducedValidation = V2AIOutputDecisionSchema.safeParse(reducedV2Output);
+  if (!reducedValidation.success) {
+    console.error('❌ Reduced V2 Output Decision (Phase C.1, no notes/userIntention) validation failed:', reducedValidation.error.message);
+    process.exit(1);
+  }
+  console.log('✅ Reduced V2 Output Decision (no notes/userIntention) validates successfully.');
+
+  if (reducedValidation.data.evaluationSummary.notes !== '') {
+    console.error(`❌ Expected evaluationSummary.notes to default to '' when omitted, got: ${JSON.stringify(reducedValidation.data.evaluationSummary.notes)}`);
+    process.exit(1);
+  }
+  console.log("✅ evaluationSummary.notes defaults to '' when Gemini omits it.");
+
+  if (
+    reducedValidation.data.userIntention.description !== 'Navegación táctica' ||
+    reducedValidation.data.userIntention.derivedFromArchetype !== false
+  ) {
+    console.error('❌ Expected userIntention to fall back to its default object when omitted, got:', reducedValidation.data.userIntention);
+    process.exit(1);
+  }
+  console.log('✅ userIntention defaults correctly when Gemini omits it entirely.');
+
+  if (
+    reducedValidation.data.suggestedAction?.actionType !== 'CLICK' ||
+    reducedValidation.data.suggestedAction?.targetElement?.value !== 'button#submit'
+  ) {
+    console.error('❌ suggestedAction was not preserved correctly in the reduced-shape response.');
+    process.exit(1);
+  }
+  console.log('✅ suggestedAction is preserved exactly, unaffected by removing notes/userIntention from the prompt.');
+
+  if (
+    reducedValidation.data.flowControl.recommendedNextStep !== 'executeSuggestedAction' ||
+    reducedValidation.data.flowControl.isStopper !== false
+  ) {
+    console.error('❌ flowControl was not preserved correctly in the reduced-shape response.');
+    process.exit(1);
+  }
+  console.log('✅ flowControl is preserved exactly, unaffected by removing notes/userIntention from the prompt.');
+
   // Test Case 3: Invalid V2 Output (missing required fields)
   const invalidV2Output = {
     evaluationSummary: {

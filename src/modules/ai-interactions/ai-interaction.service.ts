@@ -7,14 +7,16 @@ export class AiInteractionService {
     iteration: number,
     executionTimeMs: number,
     metadata: any = {},
+    requestTokens: number = 0,
+    responseTokens: number = 0,
   ): Promise<IAiInteraction> {
     return aiInteractionRepository.create({
       evaluationId: evaluationId as any,
       iteration,
       executionTimeMs,
       metadata,
-      requestTokens: 0, // Placeholder as Gemini SDK doesn't always expose this easily
-      responseTokens: 0,
+      requestTokens,
+      responseTokens,
     });
   }
 

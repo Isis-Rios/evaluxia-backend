@@ -146,7 +146,10 @@ export type V2AIInputContext = z.infer<typeof V2AIInputContextSchema>;
 export const EvaluationSummarySchema = z.object({
   flowCanContinue: z.boolean(),
   confidenceLevel: z.enum(['low', 'medium', 'high']).default('high'),
-  notes: z.string(),
+  // Phase C.1: no longer requested from Gemini in the Phase 1 prompt (it had
+  // zero downstream consumer — see ai-interaction.service.ts). Defaulted
+  // rather than required so a response that omits it still validates.
+  notes: z.string().default(''),
 });
 
 export const UserIntentionSchema = z.object({
