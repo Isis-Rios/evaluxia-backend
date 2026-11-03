@@ -1,0 +1,36 @@
+{
+  "fixture": "prototypes/checkout-mock",
+  "description": "Pantalla de checkout ficticia y autocontenida (P6, sección 28) — NO es una captura de un sitio externo. Dimensiones 400x300, generada determinísticamente para pruebas de matching. Contiene 2 problemas visuales controlados: (1) un botón 'Confirmar compra' con estilo inconsistente respecto al resto de botones de la pantalla (N-04), y (2) un encabezado principal no descriptivo ('Página', en vez de describir el contenido real) bajo WCAG 2.4.6.",
+  "expectedFindings": [
+    {
+      "id": "PEF-001",
+      "criterion": "N-04",
+      "problemType": "inconsistent-button-styling",
+      "visualReference": {
+        "description": "botón Confirmar compra",
+        "regions": ["bottom-center"]
+      },
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [
+        { "property": "visibleText", "expectedRealValue": "Confirmar compra" }
+      ],
+      "expectedRecommendationConcept": "Unificar el estilo visual de los botones principales de la pantalla.",
+      "verifiableBy": "ai"
+    },
+    {
+      "id": "PEF-002",
+      "criterion": "WCAG 2.4.6",
+      "problemType": "non-descriptive-heading",
+      "visualReference": {
+        "description": "encabezado principal",
+        "regions": ["top-center"]
+      },
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [
+        { "property": "visibleText", "expectedRealValue": "Página" }
+      ],
+      "expectedRecommendationConcept": "Usar un encabezado que describa el contenido real de la pantalla (ej. 'Confirmar tu pedido').",
+      "verifiableBy": "ai"
+    }
+  ]
+}

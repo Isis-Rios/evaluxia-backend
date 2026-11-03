@@ -11,7 +11,33 @@ export type TechnicalEvidenceType =
   | 'ACCESSIBILITY_TREE'
   | 'SCREENSHOT'
   | 'INTERACTION'
-  | 'HEADING_STRUCTURE';
+  | 'HEADING_STRUCTURE'
+  /**
+   * Prototype visual evaluation (K.2.1.1/implementación P0) — ÚNICO tipo de
+   * evidencia nuevo, aditivo. Nunca emitido por el pipeline WEB; solo
+   * `PrototypeEvaluationService`/Gemini multimodal lo produce. Ver
+   * `prototype.contracts.ts` para el contrato Zod completo (whitelist de
+   * `property`, reglas de `region`/`elementDescription`).
+   */
+  | 'VISUAL_OBSERVATION';
+
+/**
+ * Grid espacial 3x3 + `full-screen` (K.2/K.2.1/K.2.1.1) — contexto espacial
+ * de una observación visual, NUNCA identidad de elemento (ver
+ * `visual-evidence-consistency.service.ts`: region por sí sola, o
+ * region+property, nunca distingue dos elementos distintos).
+ */
+export type VisualRegion =
+  | 'top-left'
+  | 'top-center'
+  | 'top-right'
+  | 'middle-left'
+  | 'center'
+  | 'middle-right'
+  | 'bottom-left'
+  | 'bottom-center'
+  | 'bottom-right'
+  | 'full-screen';
 
 export interface TechnicalEvidenceItem {
   type: TechnicalEvidenceType;
@@ -25,6 +51,16 @@ export interface TechnicalEvidenceItem {
     property?: string;
     value?: string;
   };
+  /**
+   * Prototype visual evaluation — presentes ÚNICAMENTE en ítems
+   * `type: 'VISUAL_OBSERVATION'`. `elementDescription` es texto libre
+   * descriptivo del elemento observado (ej. "botón Guardar"); solo cuenta
+   * como identidad suficiente cuando es ESPECÍFICO (ver
+   * `visual-evidence-consistency.service.ts`). `region` es contexto
+   * espacial corroborante, nunca identidad por sí solo (K.2.1.1).
+   */
+  elementDescription?: string;
+  region?: VisualRegion;
 }
 
 export interface AffectedElement {
@@ -36,6 +72,15 @@ export interface AffectedElement {
   href?: string;
   id?: string;
   attributes?: Record<string, string>;
+  /**
+   * Prototype visual evaluation — análogo de `selector` para una imagen
+   * estática (nunca se inventa un selector CSS para un prototipo, K.2.1.1
+   * §4/sección 18 del prompt de implementación).
+   */
+  visualReference?: {
+    description?: string;
+    region?: VisualRegion;
+  };
 }
 
 /**
@@ -66,6 +111,25 @@ export interface IFinding extends Document {
 
   screenshotUrl?: string; // Traceable path reference e.g. /uploads/evaluation_{id}_step_{iteration}.png
 
+  /**
+   * Hardening (post Gemini Real #1, hallazgo A) -- presente únicamente
+   * cuando, durante la consolidación (`AuditMetricsService.
+   * deduplicateFindings`), un finding determinístico y uno de IA
+   * compartieron el mismo criterio+selector pero discreparon en `status`.
+   * El veredicto perdedor NUNCA se descarta en silencio: se preserva aquí
+   * íntegro para inspección (frontend, soporte, análisis posterior). Ver
+   * `ConsolidationDiscrepancy` en audit-metrics.service.ts.
+   */
+  discrepancy?: {
+    origin: 'deterministic' | 'ai';
+    status: FindingStatus;
+    severity: FindingSeverity;
+    confidence: FindingConfidence;
+    description: string;
+    recommendation?: string | null;
+    evidence?: TechnicalEvidenceItem[];
+  };
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -81,6 +145,7 @@ const TechnicalEvidenceItemSchema = new Schema<TechnicalEvidenceItem>(
         'SCREENSHOT',
         'INTERACTION',
         'HEADING_STRUCTURE',
+        'VISUAL_OBSERVATION',
       ],
       required: true,
     },
@@ -93,6 +158,16 @@ const TechnicalEvidenceItemSchema = new Schema<TechnicalEvidenceItem>(
     relatedValue: {
       property: { type: String },
       value: { type: String },
+    },
+    elementDescription: { type: String },
+    region: {
+      type: String,
+      enum: [
+        'top-left', 'top-center', 'top-right',
+        'middle-left', 'center', 'middle-right',
+        'bottom-left', 'bottom-center', 'bottom-right',
+        'full-screen',
+      ],
     },
   },
   { _id: false },
@@ -108,6 +183,18 @@ const AffectedElementSchema = new Schema<AffectedElement>(
     href: { type: String },
     id: { type: String },
     attributes: { type: Map, of: String },
+    visualReference: {
+      description: { type: String },
+      region: {
+        type: String,
+        enum: [
+          'top-left', 'top-center', 'top-right',
+          'middle-left', 'center', 'middle-right',
+          'bottom-left', 'bottom-center', 'bottom-right',
+          'full-screen',
+        ],
+      },
+    },
   },
   { _id: false },
 );
@@ -131,6 +218,21 @@ const FindingSchema = new Schema<IFinding>(
     impact: { type: String },
     recommendation: { type: String, default: null },
     screenshotUrl: { type: String },
+    discrepancy: {
+      type: new Schema(
+        {
+          origin: { type: String, enum: ['deterministic', 'ai'], required: true },
+          status: { type: String, enum: ['PASS', 'FAIL', 'NOT_EVALUABLE'], required: true },
+          severity: { type: String, enum: ['critical', 'high', 'medium', 'low', 'info'], required: true },
+          confidence: { type: String, enum: ['high', 'medium', 'low'], required: true },
+          description: { type: String, required: true },
+          recommendation: { type: String, default: null },
+          evidence: [TechnicalEvidenceItemSchema],
+        },
+        { _id: false },
+      ),
+      required: false,
+    },
   },
   {
     timestamps: true,

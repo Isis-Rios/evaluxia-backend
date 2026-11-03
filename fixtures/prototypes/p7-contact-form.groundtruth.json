@@ -1,0 +1,53 @@
+{
+  "fixture": "prototypes/p7-contact-form",
+  "description": "Fixture dedicada a la segunda prueba real con Gemini (P7.3/P7.3.1/P7.3.2). Generada determinísticamente con Playwright a partir de un HTML local autocontenido (nunca una captura externa), 800x620px. Diseñada para evaluar CUATRO capacidades en una sola imagen pequeña y reproducible: (1) detección de un control icon-only genuinamente ambiguo, (2) detección de ambigüedad por duplicación de etiqueta entre dos botones sin desambiguación propia, (3) abstención correcta ante un encabezado ya descriptivo (control negativo), y (4) disciplina para no inventar propiedades de DOM o comportamiento. Este archivo es exclusivamente para el ANÁLISIS POSTERIOR del resultado -- nunca se envía a Gemini ni se referencia desde el prompt o la descripción del prototipo.",
+  "expectedFindings": [
+    {
+      "id": "PEF2-ICON",
+      "criterion": "N-06",
+      "problemType": "ambiguous-icon-only-control",
+      "visualReference": {
+        "description": "ícono abstracto en la esquina superior derecha (un simple guion horizontal, sin texto ni etiqueta adyacente)",
+        "regions": ["top-right"]
+      },
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [],
+      "expectedRecommendationConcept": "Agregar una etiqueta de texto visible o un tooltip junto al ícono, o reemplazarlo por un ícono + texto que indique su función (ej. 'Cerrar', 'Minimizar', 'Más opciones').",
+      "severityIfObjective": "medium",
+      "compositeGroup": null,
+      "verifiableBy": "ai",
+      "justificacion": "El glifo (un guion horizontal simple) no corresponde a ninguna convención de ícono ampliamente reconocida de forma única -- es consistente con 'cerrar', 'minimizar', 'eliminar' o 'más opciones' por igual, y no hay ningún texto visible que lo desambigüe. Esto es verificable mirando únicamente la imagen (forma del glifo + ausencia de texto adyacente), sin depender de una preferencia estética: la pregunta objetiva es '¿un observador razonable puede determinar una única función a partir de esta forma, sin adivinar?', no '¿este ícono se ve bien?'."
+    },
+    {
+      "id": "PEF2-DUPLABEL",
+      "criterion": "N-04",
+      "problemType": "ambiguous-duplicate-button-label",
+      "visualReference": {
+        "description": "dos botones 'Enviar' (uno en la tarjeta de contacto, otro en la fila de newsletter) sin ningún texto propio que los distinga entre sí",
+        "regions": ["middle-left", "bottom-right"]
+      },
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [
+        { "property": "visibleText", "expectedRealValue": "Enviar" }
+      ],
+      "expectedRecommendationConcept": "Diferenciar el texto de cada botón según su acción real (ej. 'Enviar mensaje' / 'Suscribirme'), en vez de usar la misma palabra genérica para ambos.",
+      "severityIfObjective": "medium",
+      "compositeGroup": "duplicate-enviar-buttons",
+      "verifiableBy": "ai",
+      "justificacion": "La repetición literal de 'Enviar' NO es, por sí sola, un fallo (ver P7.3.1) -- el formulario de contacto SÍ tiene un encuadre propio (tarjeta con borde, 3 campos). La ambigüedad real depende de que el segundo 'Enviar' (newsletter) está DELIBERADAMENTE fuera de cualquier tarjeta/encuadre visual propio, y su único elemento distintivo es una leyenda pequeña y de bajo contraste (gris, 12px) ubicada ARRIBA del campo, no junto al botón mismo. La evidencia mínima que demuestra la ambigüedad real (y no una queja genérica) es que el finding compare EXPLÍCITAMENTE ambos botones -- ver la rúbrica de auditoría manual del informe, porque el matcher (`minimumEvidenceFullyCited`) solo puede verificar que se citó la propiedad 'visibleText', nunca que la comparación fue genuina."
+    },
+    {
+      "id": "PEF2-HEADING-OK",
+      "criterion": "WCAG 2.4.6",
+      "problemType": "control-no-finding-expected",
+      "visualReference": {
+        "description": "encabezado principal 'Contáctanos'",
+        "regions": ["top-center"]
+      },
+      "expectedStatus": "PASS",
+      "minimumEvidence": [],
+      "verifiableBy": "ai",
+      "justificacion": "Control negativo deliberado: 'Contáctanos' SÍ describe el propósito real de la pantalla. Un FAIL de Gemini sobre este elemento sería un falso positivo genuino (ver P7.3.1 sección 3). El SILENCIO de Gemini (no mencionar el encabezado) se interpretará como 'sin pronunciamiento', NUNCA como 'detección correcta de que el encabezado está bien' -- solo un PASS explícito con evidencia cuenta como confirmación real."
+    }
+  ]
+}

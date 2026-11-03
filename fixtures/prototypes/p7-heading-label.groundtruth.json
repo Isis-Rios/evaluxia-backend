@@ -1,0 +1,23 @@
+{
+  "fixture": "prototypes/p7-heading-label",
+  "description": "Fixture dedicada al primer experimento real con Gemini (P7.0). Generada determinísticamente con Playwright a partir de un HTML local autocontenido (nunca una captura externa) — ver 'scripts' de generación documentados en el reporte P7.0. Contiene UN único problema visual controlado y objetivamente evaluable: un encabezado principal (H1 visual, 34px bold, top-center) cuyo texto literal es 'Página' — no describe el contenido real de la pantalla (confirmación de compra/checkout), lo que constituye un incumplimiento claro de WCAG 2.4.6 (Encabezados y etiquetas). La imagen también contiene un botón 'Confirmar compra' y una tarjeta de resumen de pago/envío (contexto realista de checkout), pero NINGUNO de esos elementos tiene una expectativa declarada en este Ground Truth -- el experimento se centra exclusivamente en el encabezado, para aislar una sola variable.",
+  "expectedFindings": [
+    {
+      "id": "PEF-H1",
+      "criterion": "WCAG 2.4.6",
+      "problemType": "non-descriptive-heading",
+      "visualReference": {
+        "description": "encabezado principal",
+        "regions": ["top-center"]
+      },
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [
+        { "property": "visibleText", "expectedRealValue": "Página" }
+      ],
+      "expectedRecommendationConcept": "Reemplazar el encabezado genérico 'Página' por un texto que describa el propósito real de la pantalla (ej. 'Confirmar tu pedido' o 'Revisar y confirmar compra').",
+      "severityIfObjective": "medium",
+      "compositeGroup": null,
+      "verifiableBy": "ai"
+    }
+  ]
+}

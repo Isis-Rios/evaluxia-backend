@@ -32,6 +32,20 @@ export interface IReport extends Document {
   iterationsEvaluated?: number;
   overallScore?: number | null;
   metrics?: EvaluationMetrics;
+  /**
+   * Prototype visual evaluation (K.2.1 §5) — metadata de cobertura.
+   * `applicableCriteria`/`evaluatedCriteria`/`notEvaluableCriteria` se
+   * calculan SOLO sobre criterios aplicables (nunca incluyen
+   * OUT_OF_COVERAGE en el denominador — ver `prototype-criteria-resolver.
+   * ts`); `outOfCoverageCriteria` se reporta aparte, explícitamente, nunca
+   * como fallo. Opcional: ausente para evaluaciones WEB (sin cambios).
+   */
+  coverage?: {
+    applicableCriteria: number;
+    evaluatedCriteria: number;
+    notEvaluableCriteria: number;
+    outOfCoverageCriteria: number;
+  };
   generatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -66,6 +80,12 @@ const ReportSchema = new Schema<IReport>(
     iterationsEvaluated: { type: Number, default: 1 },
     overallScore: { type: Number, default: null },
     metrics: { type: Schema.Types.Mixed, default: null },
+    coverage: {
+      applicableCriteria: { type: Number },
+      evaluatedCriteria: { type: Number },
+      notEvaluableCriteria: { type: Number },
+      outOfCoverageCriteria: { type: Number },
+    },
     generatedAt: { type: Date },
   },
   {

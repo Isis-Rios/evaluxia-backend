@@ -5,6 +5,9 @@ import {
   UpdateEvaluationDto,
   GetEvaluationsQuery,
 } from './dto/evaluation.dto';
+import { CreatePrototypeEvaluationDto } from '@/modules/ai/contracts/prototype.contracts';
+import { prototypeEvaluationService } from './services/prototype-evaluation.service';
+import { AppError } from '@/shared/errors/AppError';
 
 /**
  * EvaluationController — HTTP layer for evaluation routes.
@@ -45,6 +48,24 @@ export class EvaluationController {
   async delete(req: Request, res: Response): Promise<void> {
     await evaluationService.delete(req.user!.userId, req.params['id'] as string);
     res.status(204).send();
+  }
+
+  /**
+   * [P4] POST /evaluations/prototype — multipart/form-data con el campo
+   * `image` (parseado por `prototypeImageUpload` middleware, ver
+   * evaluation.routes.ts) + los campos de texto de `CreatePrototypeEvaluationDto`.
+   */
+  async createPrototype(req: Request, res: Response): Promise<void> {
+    if (!req.file) {
+      throw new AppError('El campo "image" es requerido (multipart/form-data).', 400);
+    }
+    const dto = req.body as CreatePrototypeEvaluationDto;
+    const evaluation = await prototypeEvaluationService.create(req.user!.userId, dto, {
+      buffer: req.file.buffer,
+      size: req.file.size,
+      originalname: req.file.originalname,
+    });
+    res.status(202).json({ status: 'success', data: evaluation });
   }
 }
 

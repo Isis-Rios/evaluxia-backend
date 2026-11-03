@@ -2,11 +2,13 @@ import { Router } from 'express';
 import { evaluationController } from './evaluation.controller';
 import { authenticate } from '@/shared/middleware/authenticate.middleware';
 import { validate } from '@/shared/middleware/validate.middleware';
+import { prototypeImageUpload } from '@/shared/middleware/prototype-upload.middleware';
 import {
   CreateEvaluationSchema,
   UpdateEvaluationSchema,
   GetEvaluationsQuerySchema,
 } from './dto/evaluation.dto';
+import { CreatePrototypeEvaluationSchema } from '@/modules/ai/contracts/prototype.contracts';
 
 const router = Router();
 
@@ -31,6 +33,20 @@ router.post(
   '/',
   validate(CreateEvaluationSchema),
   evaluationController.create.bind(evaluationController),
+);
+
+/**
+ * [P4] POST /evaluations/prototype — multipart/form-data (`image` + campos
+ * de texto). Mounted on the SAME router as WEB's `/evaluations`
+ * (convención existente, sección 23) pero con su propio schema/upload
+ * middleware -- `CreateEvaluationSchema`/`POST /` para WEB permanece
+ * intacto.
+ */
+router.post(
+  '/prototype',
+  prototypeImageUpload,
+  validate(CreatePrototypeEvaluationSchema),
+  evaluationController.createPrototype.bind(evaluationController),
 );
 
 router.get('/:id', evaluationController.findById.bind(evaluationController));
