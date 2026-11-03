@@ -1,0 +1,16 @@
+{
+  "fixture": "_infra/smoke-test.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "El botón tiene aria-label=\"Cerrar modal\", por lo que el DeterministicAnalyzer debe marcarlo PASS, no FAIL. Sin selectorHint: es el único botón del fixture, no hay ambigüedad que resolver."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 2.4.4", "reason": "Este fixture no contiene ningún enlace." }
+  ],
+  "elementCounts": { "buttons": 1, "links": 0 }
+}

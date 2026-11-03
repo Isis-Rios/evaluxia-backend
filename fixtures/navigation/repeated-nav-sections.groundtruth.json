@@ -1,0 +1,17 @@
+{
+  "fixture": "navigation/repeated-nav-sections.html",
+  "criteria": [
+    {
+      "code": "WCAG 2.4.4",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Los 6 enlaces tienen texto no vacío individualmente ('Inicio'/'Contacto' × 3 secciones) -> analyzeLinks da PASS a los 6. La ambigüedad de que 'Inicio' se repite 3 veces hacia destinos distintos es, igual que en Fase B, un gap de IA (no evaluado aquí)."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 4.1.2", "reason": "No hay botones en este fixture." }
+  ],
+  "elementCounts": { "links": 6, "headings": 1 }
+}

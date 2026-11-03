@@ -1,0 +1,31 @@
+{
+  "fixture": "forms/login-good.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "El botón 'Iniciar sesión' tiene texto visible -> analyzeButtons debe dar PASS."
+    },
+    {
+      "code": "WCAG 1.4.3",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Verificado real: 6 elementos (h1, 2 labels, 2 inputs, button) con contraste explícito >=6.5:1, todos PASS."
+    },
+    {
+      "code": "WCAG 3.3.2",
+      "expectedStatus": "PASS",
+      "match": "SEMANTIC",
+      "verifiableBy": "ai",
+      "note": "Labels asociados correctamente vía for/id — DeterministicAnalyzer NO tiene ninguna regla de formularios hoy (confirmado leyendo el código: no existe analyzeForms). Este criterio queda pendiente de Gemini, no se evalúa en Fase B."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." }
+  ],
+  "elementCounts": { "buttons": 1, "links": 0, "images": 0, "headings": 1, "inputs": 2 }
+}

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<!--
+  Fase B — P0. Propósito: botón solo-ícono sin nombre accesible (defecto
+  intencional, WCAG 4.1.2 — sí cubierto por DeterministicAnalyzer.analyzeButtons).
+  Incluye un segundo botón correctamente etiquetado como control de
+  contraste, para confirmar que EvalUXIA distingue ambos casos en el MISMO
+  fixture (no solo "todo falla" o "todo pasa").
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; }
+    button { background-color: #ffffff; color: #111111; border: 1px solid #333; padding: 6px; }
+  </style>
+</head>
+<body>
+  <button data-t="bad">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 0h16v16H0z"></path></svg>
+  </button>
+  <button data-t="good" aria-label="Cerrar diálogo">
+    <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M0 0h16v16H0z"></path></svg>
+  </button>
+</body>
+</html>

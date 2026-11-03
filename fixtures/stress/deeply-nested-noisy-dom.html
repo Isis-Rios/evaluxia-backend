@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!--
+  Fase C — T7. Propósito: DOM con 8 ramas estructuralmente IDÉNTICAS (5
+  niveles de <div class="wrap"> anidados, cada una con un único <a> al
+  fondo) — el peor caso real para un selector basado en posición: cada
+  nivel intermedio es hijo único de su padre (bare "div" con el algoritmo
+  actual), y solo el nivel más externo distingue las 8 ramas entre sí.
+  Mide el costo REAL en caracteres/tokens de generar selectores únicos
+  verificados (Fase 2.2.1) frente al algoritmo anterior (que habría dado el
+  mismo selector ambiguo "a" a las 8 ramas).
+-->
+<html lang="es">
+<head><meta charset="utf-8" /></head>
+<body>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-1" data-t="r1">Rama 1</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-2" data-t="r2">Rama 2</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-3" data-t="r3">Rama 3</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-4" data-t="r4">Rama 4</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-5" data-t="r5">Rama 5</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-6" data-t="r6">Rama 6</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-7" data-t="r7">Rama 7</a>
+  </div></div></div></div></div>
+  <div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap"><div class="wrap">
+    <a href="/rama-8" data-t="r8">Rama 8</a>
+  </div></div></div></div></div>
+</body>
+</html>

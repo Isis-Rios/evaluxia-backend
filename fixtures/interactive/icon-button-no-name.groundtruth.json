@@ -1,0 +1,33 @@
+{
+  "fixture": "interactive/icon-button-no-name.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "FAIL",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "nth-of-type(1)",
+      "note": "Botón sin texto ni aria-label -> analyzeButtons debe dar FAIL. Selector real verificado: 'button:nth-of-type(1)'."
+    },
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "aria-label",
+      "note": "Botón con aria-label='Cerrar diálogo' -> analyzeButtons debe dar PASS. Selector real verificado: '[aria-label=\"Cerrar diálogo\"]'."
+    },
+    {
+      "code": "WCAG 1.4.3",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Ambos botones con contraste explícito, verificado real: 18.88:1 cada uno."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "El SVG interno no es un <img>, no se captura como imagen evaluable." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." }
+  ],
+  "elementCounts": { "buttons": 2, "links": 0, "images": 0 }
+}

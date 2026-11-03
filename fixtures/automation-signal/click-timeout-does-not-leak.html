@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!--
+  Fase B — P0 (GT-05). Propósito: reproduce en miniatura el patrón real del
+  incidente del "mobile-nav-toggle" — un elemento presente en el DOM pero no
+  visible (oculto por CSS, análogo a un toggle fuera de su breakpoint), de
+  forma que un intento de click sobre él resulte en timeout/fallo de
+  Playwright. El fixture también incluye un botón normal, correctamente
+  etiquetado, para confirmar que el fallo de automatización sobre el primer
+  elemento NO contamina ni afecta la evaluación determinística del segundo
+  — la evidencia de automatización y la evidencia de UX/accesibilidad deben
+  permanecer separadas.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; }
+    .hidden-toggle { display: none; }
+    button { background-color: #ffffff; color: #111111; border: 1px solid #333; }
+  </style>
+</head>
+<body>
+  <h1>Panel</h1>
+  <button class="hidden-toggle" data-t="hidden" aria-label="Alternar menú">Menú</button>
+  <button data-t="visible" aria-label="Guardar cambios">Guardar</button>
+</body>
+</html>

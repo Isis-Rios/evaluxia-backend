@@ -1,0 +1,41 @@
+{
+  "fixture": "automation-signal/click-timeout-does-not-leak.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "Alternar",
+      "note": "El botón oculto SÍ tiene aria-label ('Alternar menú') -> PASS en accesible-name, independientemente de que Playwright no pueda clickearlo (display:none). Verificado real."
+    },
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "Guardar",
+      "note": "El botón visible, no relacionado con el intento de click fallido, también PASS. Confirma que el fallo de automatización sobre el OTRO elemento no contamina este."
+    },
+    {
+      "code": "WCAG 1.4.3",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Ambos botones con contraste explícito >=18:1."
+    },
+    {
+      "code": "WCAG 2.1.1",
+      "expectedStatus": "NOT_EVALUABLE",
+      "match": "NONDETERMINISTIC",
+      "verifiableBy": "ai",
+      "note": "Este es el criterio central de GT-05: un click fallido por elemento no visible NUNCA debería, por sí solo, sustentar un finding de teclado/accesibilidad SIN evidencia DOM corroborante (viewport, display computado). DeterministicAnalyzer nunca ve eventos de Playwright — este criterio queda deliberadamente fuera de la evaluación determinística de Fase B; su verificación real depende de cómo Gemini interprete el blockingError en Fase D."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." },
+    { "code": "N-01", "reason": "DeterministicAnalyzer no produce hallazgos Nielsen a partir de eventos de automatización — si apareciera aquí, sería una contaminación real." }
+  ],
+  "elementCounts": { "buttons": 2, "links": 0, "images": 0 }
+}

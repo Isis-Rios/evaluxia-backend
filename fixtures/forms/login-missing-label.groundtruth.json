@@ -1,0 +1,31 @@
+{
+  "fixture": "forms/login-missing-label.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "El botón sigue teniendo texto visible -> PASS (el defecto de este fixture es de labels, no del botón)."
+    },
+    {
+      "code": "WCAG 1.4.3",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Verificado real: 4 elementos con contraste explícito, todos PASS."
+    },
+    {
+      "code": "WCAG 3.3.2",
+      "expectedStatus": "FAIL",
+      "match": "SEMANTIC",
+      "verifiableBy": "ai",
+      "note": "DEFECTO INTENCIONAL de este fixture: los <input> no tienen <label> asociado (solo placeholder). HOY no existe ninguna regla determinística que lo detecte (confirmado: no hay analyzeForms en deterministic-analyzer.service.ts) — 100% dependiente de Gemini. En Fase B este criterio queda registrado como pendiente, no evaluado."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." }
+  ],
+  "elementCounts": { "buttons": 1, "links": 0, "images": 0, "headings": 1, "inputs": 2 }
+}

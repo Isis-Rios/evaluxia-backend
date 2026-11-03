@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<!--
+  Fase C — T4. Propósito: confirmar EMPÍRICAMENTE el hallazgo de la Fase
+  2.3 (ajuste transversal de tokens): headings[].text, links[].text y
+  buttons[].text se capturan vía getText(el) SIN ningún .slice() de límite
+  de longitud (a diferencia de visibleDOMSummary.text que sí tiene
+  .slice(0,100) y computedStyles.text que tiene .slice(0,80)).
+  Este fixture usa un <h1> y un <a> con un párrafo largo como contenido.
+-->
+<html lang="es">
+<head><meta charset="utf-8" /></head>
+<body>
+  <h1 data-t="long-heading">Este es un encabezado que en realidad contiene un párrafo completo de texto simulando un caso real donde un desarrollador marcó accidentalmente un bloque de contenido extenso como encabezado principal en lugar de usarlo como texto de párrafo normal, lo cual puede ocurrir en páginas generadas dinámicamente o migradas desde otros sistemas de gestión de contenido sin una revisión editorial adecuada de la estructura semántica del documento.</h1>
+  <a href="/destino" data-t="long-link">Este enlace tiene un texto excesivamente largo que repite información de forma innecesaria para simular un caso real de contenido no editado correctamente, donde el texto visible de un enlace termina siendo prácticamente un párrafo completo en lugar de una frase corta y descriptiva como recomiendan las buenas prácticas de accesibilidad y redacción UX.</a>
+  <button data-t="long-button">Este botón también tiene un texto extremadamente largo que en la práctica nunca debería usarse como etiqueta de un control interactivo, pero que sirve para confirmar si EvalUXIA capta y transmite este texto sin límite alguno hacia el prompt de Gemini en Phase 2.</button>
+</body>
+</html>

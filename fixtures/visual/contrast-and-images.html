@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<!--
+  Fase B — P0. Propósito: combina 3 defectos/no-defectos determinísticamente
+  verificables en un solo fixture — WCAG 1.4.3 (contraste) y WCAG 1.1.1
+  (alt de imágenes), en sus 3 variantes: decorativa, informativa con alt,
+  informativa SIN alt (defecto real).
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; }
+    p.low-contrast { background-color: #ffffff; color: #999999; }
+  </style>
+</head>
+<body>
+  <h1>Galería</h1>
+  <p class="low-contrast" data-t="bad-contrast">Este texto tiene un contraste insuficiente frente al fondo.</p>
+
+  <img src="/deco.png" alt="" data-t="decorative" />
+  <img src="/logo.png" alt="Logo de la empresa Acme" data-t="informative-with-alt" />
+  <img src="/chart.png" data-t="informative-missing-alt" />
+</body>
+</html>

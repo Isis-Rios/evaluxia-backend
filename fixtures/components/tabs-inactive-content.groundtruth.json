@@ -1,0 +1,23 @@
+{
+  "fixture": "components/tabs-inactive-content.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Los 2 botones de pestaña tienen aria-label -> PASS."
+    },
+    {
+      "code": "WCAG 2.4.4",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Los 2 enlaces (uno en cada panel, activo o no) tienen texto propio no vacío -> PASS para ambos, independientemente de cuál esté visible actualmente."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." }
+  ],
+  "elementCounts": { "buttons": 2, "links": 2, "headings": 3 }
+}

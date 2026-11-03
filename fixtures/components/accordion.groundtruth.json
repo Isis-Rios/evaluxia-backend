@@ -1,0 +1,24 @@
+{
+  "fixture": "components/accordion.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "El botón tiene aria-label='Ver más detalles' -> PASS. Verificable sin Gemini."
+    },
+    {
+      "code": "ACCORDION-STATE",
+      "expectedStatus": "NOT_EVALUABLE",
+      "match": "NONDETERMINISTIC",
+      "verifiableBy": "ai",
+      "note": "GAP DE CAPTURA: aria-expanded NO aparece en ningún campo de ButtonEvidence (selector/tag/text/ariaLabel/role/isDisabled/isPrimary) — confirmado leyendo snapshot-evidence.model.ts. Ni el estado 'false' inicial ni el cambio a 'true' llegan a la evidencia. Código sintético, no un WCAG real."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." }
+  ],
+  "elementCounts": { "buttons": 1, "headings": 1 }
+}

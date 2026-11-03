@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!--
+  Fase E — E1. 3 estados a distinguir:
+    1. trigger: SIEMPRE presente y visible (línea base).
+    2. backdrop (<p>): presente en el DOM desde el inicio, pero display:none
+       hasta el click -> "presente pero NO visible" -> "visible".
+    3. contenido del diálogo (h2 + botón cerrar): AUSENTE del DOM hasta el
+       click -> se crea e inserta dinámicamente -> "presente y visible".
+-->
+<html lang="es">
+<head><meta charset="utf-8" /></head>
+<body>
+  <h1>Página con modal</h1>
+  <button data-t="trigger" aria-label="Abrir modal" onclick="
+    document.getElementById('backdrop').style.display = 'block';
+    var dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    dialog.setAttribute('data-t', 'dialog');
+    var h2 = document.createElement('h2');
+    h2.textContent = 'Confirmar acción';
+    var closeBtn = document.createElement('button');
+    closeBtn.setAttribute('aria-label', 'Cerrar modal');
+    closeBtn.setAttribute('data-t', 'close-btn');
+    closeBtn.textContent = 'Cerrar';
+    dialog.appendChild(h2);
+    dialog.appendChild(closeBtn);
+    document.body.appendChild(dialog);
+  ">Abrir modal</button>
+  <p id="backdrop" data-t="backdrop" style="display:none;">Fondo oscurecido</p>
+</body>
+</html>

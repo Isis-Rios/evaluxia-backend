@@ -1,0 +1,41 @@
+{
+  "fixture": "visual/contrast-and-images.html",
+  "criteria": [
+    {
+      "code": "WCAG 1.4.3",
+      "expectedStatus": "FAIL",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Texto gris (#999999) sobre fondo blanco -> ratio real verificado 2.85:1, por debajo del mínimo 4.5:1."
+    },
+    {
+      "code": "WCAG 1.1.1",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "nth-of-type(1)",
+      "note": "Imagen decorativa (alt=\"\") -> PASS. Verificado real."
+    },
+    {
+      "code": "WCAG 1.1.1",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "nth-of-type(2)",
+      "note": "Imagen informativa con alt descriptivo -> PASS. Verificado real."
+    },
+    {
+      "code": "WCAG 1.1.1",
+      "expectedStatus": "FAIL",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "nth-of-type(3)",
+      "note": "Imagen informativa SIN alt ni aria-label (defecto intencional) -> FAIL. Verificado real."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." },
+    { "code": "WCAG 4.1.2", "reason": "No hay botones en este fixture." }
+  ],
+  "elementCounts": { "buttons": 0, "links": 0, "images": 3, "headings": 1 }
+}

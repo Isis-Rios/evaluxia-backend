@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<!-- Fase E — E2. Botón con aria-expanded que cambia false->true al hacer
+     click, revelando un panel display:none -> display:block. -->
+<html lang="es">
+<head><meta charset="utf-8" /></head>
+<body>
+  <h1>Preguntas frecuentes</h1>
+  <button data-t="accordion-trigger" aria-expanded="false" aria-label="Ver más detalles" onclick="
+    this.setAttribute('aria-expanded', 'true');
+    document.getElementById('panel').style.display = 'block';
+  ">Ver más</button>
+  <p id="panel" data-t="panel" style="display:none;">Contenido revelado del acordeón.</p>
+</body>
+</html>

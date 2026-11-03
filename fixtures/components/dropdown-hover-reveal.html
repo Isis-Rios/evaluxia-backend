@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<!-- Fase E — E4. Submenú revelado por :hover REAL de CSS (no JS onclick,
+     a diferencia de E1/E2) — el patrón SC-07 del documento fuente
+     (menú desplegable activado por hover). -->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    .submenu { display: none; }
+    .dropdown:hover .submenu { display: block; }
+  </style>
+</head>
+<body>
+  <h1>Tienda</h1>
+  <nav class="dropdown">
+    <a href="#" data-t="dropdown-trigger" aria-label="Productos">Productos</a>
+    <div class="submenu">
+      <a href="/productos/software" data-t="sub1">Software</a>
+      <a href="/productos/hardware" data-t="sub2">Hardware</a>
+    </div>
+  </nav>
+</body>
+</html>

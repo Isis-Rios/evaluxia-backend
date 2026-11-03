@@ -1,0 +1,7 @@
+{
+  "fixture": "stress/many-computed-styles.html",
+  "criteria": [],
+  "mustNotAppear": [],
+  "elementCounts": { "paragraphs": 80 },
+  "note": "Fixture T5 (Fase C) — no evalúa findings; su propósito es confirmar el tope real de captura de computedStyles (50) y medir redundancia."
+}

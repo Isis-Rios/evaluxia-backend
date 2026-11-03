@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<!--
+  Fase B — P0. Propósito: contraparte defectuosa de login-good.html.
+  Defecto intencional: los <input> no tienen <label> asociado (ni for/id, ni
+  envoltura, ni aria-label) — solo placeholder. WCAG 3.3.2 es el defecto
+  central, pero HOY no existe ninguna regla determinística para detectarlo
+  (confirmado leyendo deterministic-analyzer.service.ts: no hay
+  analyzeForms). Este fixture documenta esa limitación honestamente en su
+  Ground Truth, en vez de asumir cobertura que no existe.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; }
+    input, button, h1 { background-color: #ffffff; color: #111111; }
+    button { background-color: #0b5fa5; color: #ffffff; padding: 8px 16px; border: none; }
+  </style>
+</head>
+<body>
+  <h1>Iniciar sesión</h1>
+  <form>
+    <input type="email" name="email" placeholder="Correo electrónico" required />
+    <input type="password" name="password" placeholder="Contraseña" required />
+    <button type="submit">Iniciar sesión</button>
+  </form>
+</body>
+</html>

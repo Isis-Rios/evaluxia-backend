@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<!--
+  Fase I.3 — Landing Fixture V1.
+  Página compuesta, autocontenida, sin JS/backend/recursos remotos.
+  Cada elemento relevante para el Ground Truth lleva un id="gt-..." estable
+  (getCssSelector prioriza #id cuando es único -- automation.service.ts
+  líneas 143-146), para que los selectores de landing-v1.groundtruth.json
+  nunca dependan de nth-of-type() ni de la posición en el DOM.
+  Los ids "gt-*" son SOLO una ayuda para nuestro propio experimento local;
+  no se envían a Gemini como evidencia semántica (Gemini nunca ve este HTML
+  directamente, solo la evidencia estructurada ya extraída).
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>EvalUXIA Demo — Landing V1</title>
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; margin: 0; }
+    header, main, footer { padding: 24px; }
+    .dark-section { background-color: #0b5fa5; padding: 24px; }
+    .card { display: inline-block; width: 200px; vertical-align: top; margin-right: 16px; }
+    p.bad-contrast { color: #999999; background-color: #ffffff; }
+    p.dark-good-contrast { color: #ffffff; background-color: #0b5fa5; }
+    p.dark-bad-contrast { color: #4a77a0; background-color: #0b5fa5; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <span>EvalUXIA Demo</span>
+    <nav>
+      <a href="#hero" id="gt-nav-inicio">Inicio</a>
+      <a href="#form" id="gt-nav-contacto">Contacto</a>
+    </nav>
+  </header>
+
+  <main>
+    <section id="hero">
+      <h1 id="gt-hero-h1">Organiza tu trabajo sin esfuerzo</h1>
+      <p>Una plataforma pequeña para planificar, colaborar y reportar el progreso de tu equipo.</p>
+      <button id="gt-hero-cta">Comenzar ahora</button>
+      <img id="gt-hero-image" src="/hero-illustration.png" alt="Ilustración de un panel de tareas organizadas" />
+    </section>
+
+    <section id="content">
+      <div class="card">
+        <h2 id="gt-card1-h2">Planifica</h2>
+        <p>Organiza tareas por prioridad y fecha límite.</p>
+        <a href="/planifica" id="gt-card1-link">Conocer más sobre planificación</a>
+      </div>
+      <div class="card">
+        <h2 id="gt-card2-h2">Colabora</h2>
+        <p>Comparte avances con tu equipo en tiempo real.</p>
+        <a href="/colabora" id="gt-card2-link">Conocer más sobre colaboración</a>
+      </div>
+      <div class="card">
+        <h2 id="gt-card3-h2">Reporta</h2>
+        <p>Genera reportes simples de progreso semanal.</p>
+        <a href="/reporta" id="gt-card3-link">Conocer más sobre reportes</a>
+      </div>
+
+      <!--
+        Ambigüedad intencional (ai-verifiable, NO deterministic): mismo
+        texto de enlace, destinos distintos -- analyzeLinks nunca compara
+        enlaces entre sí (confirmado en Fase B / fixture navigation/
+        duplicate-link-text-diff-dest.html), así que cada uno PASA
+        individualmente por WCAG 2.4.4 (texto no vacío). La ambigüedad de
+        destino solo es evaluable por Gemini.
+      -->
+      <p><a href="/planes/basico" id="gt-link-leer-mas-1">Leer más</a></p>
+      <p><a href="/planes/pro" id="gt-link-leer-mas-2">Leer más</a></p>
+    </section>
+
+    <section id="form">
+      <h2>Contáctanos</h2>
+      <form>
+        <label for="gt-form-email-ok">Correo electrónico</label>
+        <input type="email" id="gt-form-email-ok" name="email" />
+
+        <input type="text" id="gt-form-company-missing-label" name="company" placeholder="Empresa" />
+
+        <input type="tel" id="gt-form-phone-arialabel" name="phone" aria-label="Teléfono de contacto" />
+
+        <h3 id="gt-msg-heading">Mensaje</h3>
+        <textarea id="gt-form-message-labelledby" name="message" aria-labelledby="gt-msg-heading"></textarea>
+
+        <button type="submit" id="gt-form-submit">Enviar formulario</button>
+      </form>
+    </section>
+
+    <section id="images">
+      <img id="gt-img-decorative" src="/deco-divider.png" alt="" />
+      <img id="gt-img-informative-ok" src="/team-photo.png" alt="Equipo de EvalUXIA trabajando en la oficina" />
+      <img id="gt-img-informative-missing-alt" src="/dashboard-chart.png" />
+    </section>
+
+    <section id="contrast">
+      <!-- background-color explícito: `background-color` NO es heredado por
+           getComputedStyle (a diferencia de `color`) -- sin esto, el valor
+           computado es transparente (rgba(0,0,0,0)) y analyzeContrast lo
+           omite deliberadamente (no puede determinar contraste), aunque
+           visualmente se vea blanco por herencia del <body>. Discrepancia
+           real descubierta en esta fase, corregida aquí (fixture), no en
+           analyzeContrast (que ya se comporta correctamente por diseño). -->
+      <p id="gt-text-good-contrast" style="background-color: #ffffff;">Este texto tiene contraste suficiente para ser leído cómodamente.</p>
+      <p id="gt-text-bad-contrast" class="bad-contrast">Este texto tiene un contraste insuficiente frente al fondo.</p>
+      <div class="dark-section">
+        <p id="gt-text-dark-bg-good-contrast" class="dark-good-contrast">Texto blanco sobre fondo azul oscuro.</p>
+        <p id="gt-text-dark-bg-bad-contrast" class="dark-bad-contrast">Texto con contraste insuficiente sobre fondo azul.</p>
+      </div>
+    </section>
+
+    <section id="buttons">
+      <button id="gt-btn-named">Guardar cambios</button>
+      <button id="gt-btn-arialabel" aria-label="Cerrar notificación"><svg aria-hidden="true" width="12" height="12"></svg></button>
+      <button id="gt-btn-icon-no-name"><svg aria-hidden="true" width="12" height="12"></svg></button>
+    </section>
+  </main>
+
+  <footer>
+    <a href="/privacidad" id="gt-footer-privacy">Política de privacidad</a>
+    <a href="/terminos" id="gt-footer-terms">Términos de servicio</a>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,251 @@
+{
+  "fixture": "landing/landing-v1.html",
+  "criteria": [],
+  "mustNotAppear": [],
+  "expectedFindings": [
+    {
+      "id": "EF-001",
+      "problemType": "form-label-present",
+      "criterion": "WCAG 3.3.2",
+      "relevantSelectors": ["#gt-form-email-ok"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "label", "expectedRealValue": "Correo electrónico" }],
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-002",
+      "problemType": "missing-form-label",
+      "criterion": "WCAG 3.3.2",
+      "relevantSelectors": ["#gt-form-company-missing-label"],
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [
+        { "property": "label", "expectedRealValue": null },
+        { "property": "ariaLabel", "expectedRealValue": null },
+        { "property": "ariaLabelledBy", "expectedRealValue": null }
+      ],
+      "expectedRecommendationConcept": "asociar un <label> o aria-label al input",
+      "severityIfObjective": null,
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-003",
+      "problemType": "form-arialabel-present",
+      "criterion": "WCAG 3.3.2",
+      "relevantSelectors": ["#gt-form-phone-arialabel"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "ariaLabel", "expectedRealValue": "Teléfono de contacto" }],
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-004",
+      "problemType": "form-arialabelledby-unresolved",
+      "criterion": "WCAG 3.3.2",
+      "relevantSelectors": ["#gt-form-message-labelledby"],
+      "expectedStatus": "NOT_EVALUABLE",
+      "minimumEvidence": [{ "property": "ariaLabelledBy", "expectedRealValue": "gt-msg-heading" }],
+      "note": "Limitación de extractor documentada en Fase I.2: automation.service.ts captura solo el string de referencia aria-labelledby, nunca resuelve el texto del elemento apuntado -- NOT_EVALUABLE es la respuesta correcta esperada, no un defecto.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-005",
+      "problemType": "decorative-image-correct",
+      "criterion": "WCAG 1.1.1",
+      "relevantSelectors": ["#gt-img-decorative"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "alt", "expectedRealValue": "" }],
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-006A",
+      "problemType": "informative-image-with-alt",
+      "criterion": "WCAG 1.1.1",
+      "relevantSelectors": ["#gt-img-informative-ok"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-006B",
+      "problemType": "informative-image-with-alt",
+      "criterion": "WCAG 1.1.1",
+      "relevantSelectors": ["#gt-hero-image"],
+      "expectedStatus": "PASS",
+      "note": "Discrepancia de diseño de GT corregida (Fase I.3): originalmente EF-006 agrupaba este selector junto a #gt-img-informative-ok bajo un mismo id, tratando dos elementos reales independientes como si fueran uno solo -- el matcher clasificaba correctamente el segundo como DUPLICATE, exponiendo que `relevantSelectors` representa formas alternativas de referenciar EL MISMO elemento, no un conjunto de elementos intercambiables. Separado en entradas independientes.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-007",
+      "problemType": "missing-alt",
+      "criterion": "WCAG 1.1.1",
+      "relevantSelectors": ["#gt-img-informative-missing-alt"],
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [{ "property": "alt", "expectedRealValue": null }],
+      "expectedRecommendationConcept": "agregar un atributo alt descriptivo",
+      "severityIfObjective": null,
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-008",
+      "problemType": "sufficient-contrast",
+      "criterion": "WCAG 1.4.3",
+      "relevantSelectors": ["#gt-text-good-contrast"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "contrastRatio", "expectedRealValue": "18.88:1" }],
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-009",
+      "problemType": "insufficient-contrast",
+      "criterion": "WCAG 1.4.3",
+      "relevantSelectors": ["#gt-text-bad-contrast"],
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [{ "property": "contrastRatio", "expectedRealValue": "2.85:1" }],
+      "severityIfObjective": "high",
+      "note": "Severidad derivada objetivamente de la propia fórmula de analyzeContrast (ratio < 3.0 => high) -- verificado con calculateContrastRatio real, no inventado.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-010",
+      "problemType": "sufficient-contrast",
+      "criterion": "WCAG 1.4.3",
+      "relevantSelectors": ["#gt-text-dark-bg-good-contrast"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "contrastRatio", "expectedRealValue": "6.57:1" }],
+      "note": "Mismo criterio (1.4.3) que EF-008 pero sobre un fondo distinto (#0b5fa5), para no depender de un único estilo de página.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-011",
+      "problemType": "insufficient-contrast",
+      "criterion": "WCAG 1.4.3",
+      "relevantSelectors": ["#gt-text-dark-bg-bad-contrast"],
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [{ "property": "contrastRatio", "expectedRealValue": "1.39:1" }],
+      "severityIfObjective": "high",
+      "note": "Ratio real verificado con calculateContrastRatio (1.39:1) -- también < 3.0 => severidad high por fórmula, no por juicio.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-012A",
+      "problemType": "button-named-text",
+      "criterion": "WCAG 4.1.2",
+      "relevantSelectors": ["#gt-btn-named"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-012B",
+      "problemType": "button-named-text",
+      "criterion": "WCAG 4.1.2",
+      "relevantSelectors": ["#gt-hero-cta"],
+      "expectedStatus": "PASS",
+      "note": "Ver nota de discrepancia en EF-006B -- mismo ajuste aplicado aquí: 3 elementos independientes separados en entradas propias.",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-012C",
+      "problemType": "button-named-text",
+      "criterion": "WCAG 4.1.2",
+      "relevantSelectors": ["#gt-form-submit"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-013",
+      "problemType": "button-named-arialabel",
+      "criterion": "WCAG 4.1.2",
+      "relevantSelectors": ["#gt-btn-arialabel"],
+      "expectedStatus": "PASS",
+      "minimumEvidence": [{ "property": "ariaLabel", "expectedRealValue": "Cerrar notificación" }],
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-014",
+      "problemType": "icon-button-no-name",
+      "criterion": "WCAG 4.1.2",
+      "relevantSelectors": ["#gt-btn-icon-no-name"],
+      "expectedStatus": "FAIL",
+      "expectedRecommendationConcept": "agregar texto visible o aria-label al botón",
+      "severityIfObjective": null,
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015A",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-footer-privacy"],
+      "expectedStatus": "PASS",
+      "note": "Ver nota de discrepancia en EF-006B -- 7 elementos independientes separados en entradas propias (EF-015A..G).",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015B",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-footer-terms"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015C",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-card1-link"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015D",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-card2-link"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015E",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-card3-link"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015F",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-nav-inicio"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-015G",
+      "problemType": "descriptive-link-text",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-nav-contacto"],
+      "expectedStatus": "PASS",
+      "verifiableBy": "deterministic"
+    },
+    {
+      "id": "EF-016",
+      "problemType": "ambiguous-link-destination",
+      "criterion": "WCAG 2.4.4",
+      "relevantSelectors": ["#gt-link-leer-mas-1", "#gt-link-leer-mas-2"],
+      "expectedStatus": "FAIL",
+      "compositeGroup": "ambiguous-leer-mas",
+      "note": "analyzeLinks NUNCA compara enlaces entre sí (confirmado en Fase B, fixture duplicate-link-text-diff-dest.html) -- cada enlace individualmente PASA determinísticamente (texto no vacío). Esta ambigüedad de destino es exclusivamente evaluable por Gemini. LIMITACIÓN METODOLÓGICA CONOCIDA (K.1.1): el determinístico SÍ produce un PASS decisivo para el MISMO criterio (WCAG 2.4.4) + selector -- la política de consolidación (determinístico gana ante discrepancia) enmascara cualquier FAIL correcto de Gemini bajo ese PASS a nivel de `status` consolidado. El matcher de Ground Truth juzga por `status`, no por `discrepancy` -- por lo tanto este expectedFinding SIEMPRE producirá FP+FN en el matcher, independientemente de si Gemini acierta o no. Se conserva en el Ground Truth (no se elimina, es un caso real y válido), pero NO se usa como el candidato principal del experimento K.1.1 -- ver EF-017.",
+      "verifiableBy": "ai"
+    },
+    {
+      "id": "EF-017",
+      "problemType": "ambiguous-link-destination-nielsen",
+      "criterion": "N-04",
+      "relevantSelectors": ["#gt-link-leer-mas-1", "#gt-link-leer-mas-2"],
+      "expectedStatus": "FAIL",
+      "minimumEvidence": [{ "property": "text", "expectedRealValue": "Leer más" }],
+      "compositeGroup": "ambiguous-leer-mas-nielsen",
+      "expectedRecommendationConcept": "usar texto de enlace único y descriptivo para cada destino, en vez de repetir \"Leer más\"",
+      "note": "Candidato AI-only PRINCIPAL del experimento K.1.1 (ver Parte C/D/E del reporte). Mismo elemento real que EF-016, pero bajo el código Nielsen N-04 (Consistencia y estándares) en vez de WCAG 2.4.4 -- clave de deduplicación DISTINTA (N-04_<selector> vs WCAG 2.4.4_<selector>), por lo tanto CERO colisión con el PASS determinístico de analyzeLinks (que solo escribe bajo la clave WCAG 2.4.4). El único hallazgo determinístico existente bajo N-04 es la regla de 'missing h1' sobre el selector 'body' -- selector distinto, tampoco colisiona. No es un escenario fabricado: en Gemini Real #1 (Landing V1, ejecución real), Gemini produjo ESPONTÁNEAMENTE (sin que el prompt se lo sugiriera) dos findings N-04 citando AMBOS selectores juntos con esta misma descripción conceptual ('the use of generic Leer más links for different content areas is inconsistent'). Este expectedFinding formaliza esa observación real ya ocurrida como Ground Truth, en vez de inventar un juicio nuevo sin precedente.",
+      "verifiableBy": "ai"
+    }
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "fixture": "components/modal-trigger.html",
+  "criteria": [
+    {
+      "code": "WCAG 4.1.2",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "El botón trigger tiene aria-label='Abrir modal' -> PASS. Verificable sin Gemini."
+    },
+    {
+      "code": "MODAL-FOCUS-TRAP",
+      "expectedStatus": "NOT_EVALUABLE",
+      "match": "NONDETERMINISTIC",
+      "verifiableBy": "ai",
+      "note": "GAP DE CAPTURA (no solo de análisis): document.activeElement NO se captura en ningún campo de la evidencia hoy. Ni siquiera Gemini podría evaluar el atrapamiento de foco con la evidencia actual, porque el dato de foco nunca llega al prompt. Código sintético (no es un WCAG real) para no colisionar con WCAG 4.1.2."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." }
+  ],
+  "elementCounts": { "buttons": 1, "headings": 1 }
+}

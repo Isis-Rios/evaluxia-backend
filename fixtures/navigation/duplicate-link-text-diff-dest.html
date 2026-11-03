@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<!--
+  Fase B — P0. Propósito: 2 enlaces con el MISMO texto visible ("Leer más")
+  hacia destinos DISTINTOS. Defecto real de UX/A11y (WCAG 2.4.4 — propósito
+  del enlace fuera de contexto), pero analyzeLinks() solo verifica que CADA
+  enlace individualmente tenga texto no vacío — no compara enlaces entre sí.
+  Por diseño, DeterministicAnalyzer debe dar PASS a AMBOS enlaces
+  (verificado, no asumido) — la ambigüedad real solo es detectable por
+  Gemini. Este fixture documenta ese gap explícitamente.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { background-color: #ffffff; color: #111111; font-family: sans-serif; }
+    a { color: #0b5fa5; }
+  </style>
+</head>
+<body>
+  <h1>Últimas noticias</h1>
+  <article>
+    <h2>Noticia A</h2>
+    <p>Resumen de la noticia A.</p>
+    <a href="/noticias/a" data-t="link-a">Leer más</a>
+  </article>
+  <article>
+    <h2>Noticia B</h2>
+    <p>Resumen de la noticia B.</p>
+    <a href="/noticias/b" data-t="link-b">Leer más</a>
+  </article>
+</body>
+</html>

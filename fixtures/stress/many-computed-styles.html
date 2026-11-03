@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!--
+  Fase C — T5. Propósito: confirmar que el tope real de 50 elementos para
+  computedStyles (automation.service.ts: `styleTargetElements...slice(0,50)`)
+  se respeta cuando la página tiene MÁS de 50 candidatos elegibles
+  (h1-h6, button, [role=button], a[href], input, select, textarea, label, p).
+  Este fixture tiene 80 <p> — 30 más de lo que el tope permite capturar.
+-->
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <style>p { color: #333; background-color: #fff; }</style>
+</head>
+<body>
+  <h1>Página con muchos párrafos</h1>
+  <div id="container"></div>
+  <script>
+    const container = document.getElementById('container');
+    for (let i = 0; i < 80; i++) {
+      const p = document.createElement('p');
+      p.textContent = 'Párrafo número ' + i;
+      p.setAttribute('data-t', 'p-' + i);
+      container.appendChild(p);
+    }
+  </script>
+</body>
+</html>

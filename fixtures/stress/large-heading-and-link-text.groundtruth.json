@@ -1,0 +1,7 @@
+{
+  "fixture": "stress/large-heading-and-link-text.html",
+  "criteria": [],
+  "mustNotAppear": [],
+  "elementCounts": { "headings": 1, "links": 1, "buttons": 1 },
+  "note": "Fixture T4 (Fase C) — no evalúa findings de accesibilidad; su propósito es medir longitud real de texto capturado sin truncar. Sin criterios porque no es un escenario de UX/A11y, es una prueba de comportamiento de captura/tokens."
+}

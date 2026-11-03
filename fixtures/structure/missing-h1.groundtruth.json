@@ -1,0 +1,18 @@
+{
+  "fixture": "structure/missing-h1.html",
+  "criteria": [
+    {
+      "code": "WCAG 1.3.1",
+      "expectedStatus": "FAIL",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Sin <h1> -> analyzeHeadings emite FAIL bajo wcagCriterion='WCAG 1.3.1 Información y relaciones' (y heuristicCode='N-04', pero el finding real solo expone un código a la vez desde la perspectiva de este oráculo — se usa el WCAG por ser el campo efectivamente poblado). Verificado real."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 2.4.4", "reason": "No hay enlaces en este fixture." },
+    { "code": "WCAG 4.1.2", "reason": "No hay botones en este fixture." }
+  ],
+  "elementCounts": { "buttons": 0, "links": 0, "images": 0, "headings": 2 }
+}

@@ -1,0 +1,24 @@
+{
+  "fixture": "components/dropdown-hover-reveal.html",
+  "criteria": [
+    {
+      "code": "WCAG 2.4.4",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "note": "Los 3 enlaces (trigger + 2 del submenú) tienen texto propio no vacío -> PASS para los 3, independientemente de si el submenú está revelado o no en el momento de la captura."
+    },
+    {
+      "code": "HOVER-ONLY-ACCESS",
+      "expectedStatus": "NOT_EVALUABLE",
+      "match": "NONDETERMINISTIC",
+      "verifiableBy": "ai",
+      "note": "El riesgo real de accesibilidad de este patrón (SC-07 del documento fuente: un menú SOLO accesible por hover puede ser inoperable por teclado/táctil) no es evaluable determinísticamente hoy — no hay captura de eventos de teclado ni de operabilidad táctil. Código sintético, no un WCAG real."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 4.1.2", "reason": "No hay botones en este fixture (son enlaces <a>)." }
+  ],
+  "elementCounts": { "links": 3, "headings": 1 }
+}

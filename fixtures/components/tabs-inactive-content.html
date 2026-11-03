@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<!-- Fase E — E3. 2 pestañas, cada una con su propio panel (h2 + enlace).
+     Solo un panel es display:block a la vez; el otro permanece en el DOM
+     con display:none. -->
+<html lang="es">
+<head><meta charset="utf-8" /></head>
+<body>
+  <h1>Documentación</h1>
+  <button data-t="tab1-btn" aria-label="Pestaña Instalación" onclick="
+    document.getElementById('panel1').style.display = 'block';
+    document.getElementById('panel2').style.display = 'none';
+  ">Instalación</button>
+  <button data-t="tab2-btn" aria-label="Pestaña Configuración" onclick="
+    document.getElementById('panel1').style.display = 'none';
+    document.getElementById('panel2').style.display = 'block';
+  ">Configuración</button>
+
+  <div id="panel1" data-t="panel1" style="display:block;">
+    <h2>Guía de instalación</h2>
+    <a href="/docs/instalacion">Ver guía de instalación</a>
+  </div>
+  <div id="panel2" data-t="panel2" style="display:none;">
+    <h2>Guía de configuración</h2>
+    <a href="/docs/configuracion">Ver guía de configuración</a>
+  </div>
+</body>
+</html>

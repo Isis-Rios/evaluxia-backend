@@ -1,0 +1,33 @@
+{
+  "fixture": "navigation/duplicate-link-text-diff-dest.html",
+  "criteria": [
+    {
+      "code": "WCAG 2.4.4",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "article:nth-of-type(1)",
+      "note": "analyzeLinks solo verifica que ESTE enlace tenga texto no vacío ('Leer más') -> PASS. Verificado real."
+    },
+    {
+      "code": "WCAG 2.4.4",
+      "expectedStatus": "PASS",
+      "match": "EXACT",
+      "verifiableBy": "deterministic",
+      "selectorHint": "article:nth-of-type(2)",
+      "note": "Mismo resultado para el segundo enlace, individualmente -> PASS. Verificado real."
+    },
+    {
+      "code": "AMBIGUOUS-LINK-DESTINATION",
+      "expectedStatus": "FAIL",
+      "match": "SEMANTIC",
+      "verifiableBy": "ai",
+      "note": "GAP DOCUMENTADO A PROPÓSITO: el defecto real (2 enlaces con el MISMO texto 'Leer más' hacia destinos DISTINTOS) NO es detectable por DeterministicAnalyzer.analyzeLinks, que solo evalúa cada enlace de forma aislada, nunca comparándolos entre sí. Código deliberadamente SIN el patrón 'WCAG X.X.X' (para no normalizar/colisionar con los 2 criterios EXACT de arriba, que sí usan el código real 'WCAG 2.4.4' por elemento). Requiere Gemini o una futura regla determinística nueva. Excluido de la evaluación en Fase B (verifiableBy='ai')."
+    }
+  ],
+  "mustNotAppear": [
+    { "code": "WCAG 1.1.1", "reason": "No hay imágenes en este fixture." },
+    { "code": "WCAG 4.1.2", "reason": "No hay botones en este fixture." }
+  ],
+  "elementCounts": { "buttons": 0, "links": 2, "images": 0, "headings": 3 }
+}

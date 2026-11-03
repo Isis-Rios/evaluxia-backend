@@ -1,0 +1,7 @@
+{
+  "fixture": "stress/deeply-nested-noisy-dom.html",
+  "criteria": [],
+  "mustNotAppear": [],
+  "elementCounts": { "links": 8 },
+  "note": "Fixture T7 (Fase C) — no evalúa findings; mide el costo en tokens de las cadenas de ancestros del selector único (Fase 2.2.1) sobre un DOM profundamente anidado y repetitivo."
+}
