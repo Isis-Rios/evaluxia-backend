@@ -91,6 +91,8 @@ export interface ISnapshotEvidence extends Document {
   landmarks: LandmarkEvidence[];
   accessibilityTree?: string;
   computedStyles: ComputedStyleEvidence[];
+  /** J4 Step 2a (Hardening Post-Fase H) — larger bounded candidate pool (up to 500), consumed only by the Gemini-facing dedup+prioritization pipeline. `computedStyles` above remains the DeterministicAnalyzer-facing field, unchanged. */
+  computedStylesCandidates?: ComputedStyleEvidence[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -187,6 +189,25 @@ const SnapshotEvidenceSchema = new Schema<ISnapshotEvidence>(
         fontFamily: { type: String, default: '' },
       },
     ],
+    // J4 Step 2a (Hardening Post-Fase H) — same sub-schema shape as
+    // computedStyles above, larger bounded candidate pool. Optional/default
+    // [] for backward compatibility with documents written before this field existed.
+    computedStylesCandidates: {
+      type: [
+        {
+          selector: { type: String, required: true },
+          tag: { type: String, required: true },
+          text: { type: String, default: '' },
+          color: { type: String, default: '' },
+          backgroundColor: { type: String, default: '' },
+          fontSize: { type: String, default: '' },
+          fontWeight: { type: String, default: '' },
+          lineHeight: { type: String, default: '' },
+          fontFamily: { type: String, default: '' },
+        },
+      ],
+      default: [],
+    },
   },
   {
     timestamps: true,

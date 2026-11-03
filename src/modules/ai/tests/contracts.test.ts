@@ -389,6 +389,33 @@ function runTests() {
   }
   console.log('✅ SuperRefine strict validation (rejecting empty property/value, unknown type, empty type) validated successfully.');
 
+  // Test Case 5e: DOM_ATTRIBUTE `value` edge cases (Fase 2 fix — real
+  // incident, evaluation 6ae151a7c9e40a501f9cd885, 2026-10-28). Before this
+  // fix, `value: ''` was indistinguishable from an omitted `value` and was
+  // rejected identically — a legitimate empty attribute observation
+  // (e.g. alt="") caused Phase 2 to exhaust all retries with zero findings
+  // persisted. This isolates exactly what changed and what did NOT.
+  const domAttributeValueCases: Array<{ name: string; payload: any; expectValid: boolean }> = [
+    { name: '1. valor de texto válido', payload: { type: 'DOM_ATTRIBUTE', property: 'alt', value: 'Logo de la empresa' }, expectValid: true },
+    { name: '2. value: "" (cadena vacía explícita) — EL FIX', payload: { type: 'DOM_ATTRIBUTE', property: 'alt', value: '' }, expectValid: true },
+    { name: '3. value ausente (campo no presente)', payload: { type: 'DOM_ATTRIBUTE', property: 'alt' }, expectValid: false },
+    { name: '4. value: null (sentinel "null", ya soportado antes del fix)', payload: { type: 'DOM_ATTRIBUTE', property: 'role', value: null }, expectValid: true },
+    { name: '5. value de tipo incorrecto (objeto)', payload: { type: 'DOM_ATTRIBUTE', property: 'alt', value: { nested: true } }, expectValid: false },
+    { name: '6. value solo espacios en blanco (sigue rechazado, no es "")', payload: { type: 'DOM_ATTRIBUTE', property: 'alt', value: '   ' }, expectValid: false },
+    { name: '7. regresión: COMPUTED_STYLE con value: "" sigue rechazado (no se debilitó otro tipo)', payload: { type: 'COMPUTED_STYLE', property: 'contrastRatio', value: '' }, expectValid: false },
+  ];
+  for (const tc of domAttributeValueCases) {
+    const res = TechnicalEvidenceItemSchema.safeParse(tc.payload);
+    if (res.success !== tc.expectValid) {
+      console.error(
+        `❌ DOM_ATTRIBUTE value edge case [${tc.name}]: esperado ${tc.expectValid ? 'VÁLIDO' : 'RECHAZADO'}, obtenido ${res.success ? 'VÁLIDO' : 'RECHAZADO'}`,
+        res.success ? JSON.stringify(res.data) : res.error.message,
+      );
+      process.exit(1);
+    }
+  }
+  console.log('✅ DOM_ATTRIBUTE value edge cases (Fase 2 fix: "" aceptado, ausente/null-sentinel/tipo-incorrecto/whitespace sin cambios, COMPUTED_STYLE sin debilitar) validados.');
+
   // Test Case 6: ContextBuilder Sliding Window Test (Keep last 3 actions)
   const dummyProfile: any = {
     fullName: 'Carlos Ruiz',

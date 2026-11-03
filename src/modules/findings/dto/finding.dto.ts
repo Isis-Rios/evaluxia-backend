@@ -33,6 +33,21 @@ export const CreateFindingSchema = z.object({
   impact: z.string().optional(),
   recommendation: z.string().nullable().optional(),
   screenshotUrl: z.string().optional(),
+
+  // Hardening (post Gemini Real #1, hallazgo A): veredicto perdedor de una
+  // discrepancia determinístico/IA, preservado en vez de descartado -- ver
+  // ConsolidationDiscrepancy en audit-metrics.service.ts.
+  discrepancy: z
+    .object({
+      origin: z.enum(['deterministic', 'ai']),
+      status: z.enum(['PASS', 'FAIL', 'NOT_EVALUABLE']),
+      severity: z.enum(['critical', 'high', 'medium', 'low', 'info']),
+      confidence: z.enum(['high', 'medium', 'low']),
+      description: z.string(),
+      recommendation: z.string().nullable().optional(),
+      evidence: z.array(TechnicalEvidenceItemSchema).optional(),
+    })
+    .optional(),
 });
 
 export const UpdateFindingSchema = CreateFindingSchema.partial().omit({

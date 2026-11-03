@@ -272,6 +272,13 @@ export const TechnicalEvidenceItemSchema = z.preprocess(
         'SCREENSHOT',
         'INTERACTION',
         'HEADING_STRUCTURE',
+        // Prototype visual evaluation (P0) — nunca emitido por el pipeline
+        // WEB (V2AuditFindingSchema no lo usa en ningún flujo real); listado
+        // aquí ÚNICAMENTE para que el tipo TS exportado `TechnicalEvidenceItem`
+        // coincida con su homólogo Mongoose (finding.model.ts), que SÍ lo
+        // persiste para prototipos. Aditivo, no cambia ninguna validación
+        // existente para los otros 6 valores.
+        'VISUAL_OBSERVATION',
       ]),
       property: z
         .union([z.string(), z.number()])
@@ -319,7 +326,7 @@ export const TechnicalEvidenceItemSchema = z.preprocess(
       const hasVal = isNonEmpty(item.value);
 
       switch (item.type) {
-        case 'DOM_ATTRIBUTE':
+        case 'DOM_ATTRIBUTE': {
           if (!hasProp && !hasAttr) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
@@ -327,7 +334,22 @@ export const TechnicalEvidenceItemSchema = z.preprocess(
               path: ['property'],
             });
           }
-          if (!hasVal) {
+          // Real incident (evaluation 6ae151a7c9e40a501f9cd885, 2026-10-28):
+          // a genuinely empty DOM attribute (e.g. alt="", aria-label="") is a
+          // real, meaningful observed value, not a missing one -- but the old
+          // `!hasVal` check (isNonEmpty, i.e. trim().length > 0) rejected an
+          // explicit `value: ""` exactly like an omitted field, aborting
+          // Phase 2 after exhausting all retries with zero findings
+          // persisted. `item.value` already went through the field-level
+          // transform above (undefined stays undefined; null becomes the
+          // 'null' sentinel string; "" stays ""), so "absent" and "explicit
+          // empty string" are still distinguishable here by identity, not by
+          // trimmed length. A value that ONLY contains whitespace (e.g.
+          // "   ") is still rejected as missing -- that is not a real
+          // attribute value, just padding (see contracts.test.ts, "DOM_ATTRIBUTE
+          // empty string value" case, left intact on purpose).
+          const valueMissing = item.value === undefined || (item.value !== '' && item.value.trim().length === 0);
+          if (valueMissing) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message: 'DOM_ATTRIBUTE evidence must specify observed value.',
@@ -335,6 +357,7 @@ export const TechnicalEvidenceItemSchema = z.preprocess(
             });
           }
           break;
+        }
 
         case 'COMPUTED_STYLE':
           if (!hasProp) {
@@ -369,6 +392,8 @@ export const TechnicalEvidenceItemSchema = z.preprocess(
       }
     }),
 );
+
+export type TechnicalEvidenceItem = z.output<typeof TechnicalEvidenceItemSchema>;
 
 export const AffectedElementSchema = z.object({
   tag: z.string().nullish().transform((v) => (v === undefined || v === null ? undefined : String(v))),

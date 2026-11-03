@@ -41,6 +41,8 @@ export interface PageSnapshot {
   forms: FormEvidence[];
   landmarks: LandmarkEvidence[];
   computedStyles: ComputedStyleEvidence[];
+  /** J4 Step 2a — larger, bounded candidate pool (up to 500) for the Gemini-facing dedup+prioritization pipeline. Never read by DeterministicAnalyzer. */
+  computedStylesCandidates: ComputedStyleEvidence[];
   accessibilityTree?: string;
   visibleDOMSummary?: InteractiveElement[];
 }
@@ -50,6 +52,112 @@ export interface NavigationResult {
   finalUrl: string;
   statusCode?: number;
   loadTimeMs: number;
+}
+
+/**
+ * Phase 2.2.1 — Unique, verified, Playwright-consumable CSS selector.
+ *
+ * A candidate is only ever returned if it is EXPLICITLY verified — never
+ * assumed — to resolve to exactly one element, AND that element is the
+ * original one: `document.querySelectorAll(sel)` has length 1 and its
+ * single match `=== el`. This is required because `id`/`aria-label`/`name`
+ * are not guaranteed unique in real-world markup (duplicate ids do happen),
+ * and a bare `tag:nth-of-type(n)` relative only to the immediate parent is
+ * NOT globally unique — confirmed real: a single real page produced the
+ * exact same selector string for 5 different <a> elements (different
+ * href/text each), which corrupted DeterministicAnalyzer, evidence
+ * deduplication keys, and the evidence Gemini received.
+ *
+ * No DOM mutation: this only ever reads attributes/structure, never writes
+ * anything to the page under evaluation.
+ *
+ * Defined here (module scope, self-contained — only browser globals, no
+ * closure over anything outside itself) so it is a single source of truth
+ * runnable both from `extractCurrentSnapshot`'s real Playwright evaluate
+ * call (via its serialized source, reconstructed inside the page context —
+ * see below) and directly from tests against a real Playwright page,
+ * without duplicating the algorithm.
+ */
+export function getCssSelector(el: Element): string {
+  const isUniqueMatch = (sel: string, target: Element): boolean => {
+    let matches: NodeListOf<Element>;
+    try {
+      matches = document.querySelectorAll(sel);
+    } catch {
+      return false; // invalid selector syntax for this candidate
+    }
+    return matches.length === 1 && matches[0] === target;
+  };
+
+  const escapeAttrValue = (v: string) => v.replace(/"/g, '\\"');
+
+  // Builds a `parent > child` path selector, growing it segment by segment
+  // from `el` upward until the accumulated suffix is verified unique+correct
+  // — giving the shortest sufficient path rather than always walking all
+  // the way to <html>. Each segment uses `tag:nth-of-type(n)` (n = position
+  // among same-tag siblings under that exact parent) only when there is
+  // more than one such sibling, otherwise the bare tag.
+  //
+  // A full such path from any element up to <html> is unique by
+  // construction (two different nodes can never share the same parent AND
+  // the same same-tag-sibling index under that parent — that would make
+  // them the same node), so this loop is guaranteed to find a
+  // verified-unique match at or before the root. The explicit
+  // `isUniqueMatch` check at every step still gates the return, per the
+  // "never assume" requirement.
+  const buildAncestorPathSelector = (target: Element): string => {
+    const segments: string[] = [];
+    let node: Element | null = target;
+
+    while (node) {
+      const tag = node.tagName.toLowerCase();
+      const parent: Element | null = node.parentElement;
+
+      let segment = tag;
+      if (parent) {
+        const sameTagSiblings = Array.from(parent.children).filter(
+          (c) => c.tagName === node!.tagName,
+        );
+        if (sameTagSiblings.length > 1) {
+          const index = sameTagSiblings.indexOf(node) + 1;
+          segment = `${tag}:nth-of-type(${index})`;
+        }
+      }
+      segments.unshift(segment);
+
+      const candidate = segments.join(' > ');
+      if (isUniqueMatch(candidate, target)) {
+        return candidate;
+      }
+
+      if (!parent) break;
+      node = parent;
+    }
+
+    // Residual fallback: should not be reachable for any element attached
+    // to `document` (see proof above) — kept only so the function always
+    // returns a string instead of throwing.
+    return segments.join(' > ');
+  };
+
+  if (el.id) {
+    const idSelector = `#${CSS.escape(el.id)}`;
+    if (isUniqueMatch(idSelector, el)) return idSelector;
+  }
+
+  const ariaLabel = el.getAttribute('aria-label');
+  if (ariaLabel) {
+    const ariaSelector = `[aria-label="${escapeAttrValue(ariaLabel)}"]`;
+    if (isUniqueMatch(ariaSelector, el)) return ariaSelector;
+  }
+
+  const name = el.getAttribute('name');
+  if (name) {
+    const nameSelector = `[name="${escapeAttrValue(name)}"]`;
+    if (isUniqueMatch(nameSelector, el)) return nameSelector;
+  }
+
+  return buildAncestorPathSelector(el);
 }
 
 /**
@@ -156,6 +264,34 @@ export class AutomationService {
   }
 
   /**
+   * TEST-ONLY seam (Fase 2.3, Fase A — testing infrastructure).
+   *
+   * Registers a real Playwright page (same `BrowserManager.newPage()` +
+   * `installNetworkGuard` as `startSession`) directly into `activeSessions`,
+   * loading a local HTML fixture via `page.setContent()` instead of
+   * navigating to a URL. This intentionally bypasses `assertSafeUrl` — the
+   * SSRF guard correctly rejects loopback/private addresses and `data:`
+   * navigation for real evaluations, which also makes it impossible to
+   * serve a local fixture through `startSession` as-is. This method exists
+   * so the test suite can exercise `extractCurrentSnapshot`/`executeAction`
+   * against local, deterministic fixtures for real, without weakening the
+   * guard for actual evaluation traffic.
+   *
+   * MUST NEVER be called from any production code path (evaluation.service.ts,
+   * controllers, RuleEngine, etc.) — only from test files.
+   */
+  async attachTestSession(evaluationId: string, html: string): Promise<void> {
+    if (this.activeSessions.has(evaluationId)) {
+      await this.closeSession(evaluationId);
+    }
+
+    const { page, close } = await this.browserManager.newPage();
+    this.activeSessions.set(evaluationId, { page, close });
+    await this.installNetworkGuard(page);
+    await page.setContent(html, { waitUntil: 'domcontentloaded' });
+  }
+
+  /**
    * Extracts snapshot of the current state of the page in the active session.
    */
   async extractCurrentSnapshot(evaluationId: string): Promise<PageSnapshot> {
@@ -167,25 +303,16 @@ export class AutomationService {
     const { page } = session;
 
     try {
-      const snapshot = await page.evaluate((): Omit<PageSnapshot, 'accessibilityTree'> => {
+      const snapshot = await page.evaluate((getCssSelectorSource: string): Omit<PageSnapshot, 'accessibilityTree'> => {
         const getText = (el: Element) => el.textContent?.trim() ?? '';
 
-        const getCssSelector = (el: Element): string => {
-          if (el.id) return `#${el.id}`;
-          const ariaLabel = el.getAttribute('aria-label');
-          if (ariaLabel) return `[aria-label="${ariaLabel.replace(/"/g, '\\"')}"]`;
-          const name = el.getAttribute('name');
-          if (name) return `[name="${name.replace(/"/g, '\\"')}"]`;
-          const tag = el.tagName.toLowerCase();
-          const parent = el.parentElement;
-          if (!parent) return tag;
-          const siblings = Array.from(parent.children).filter((c) => c.tagName === el.tagName);
-          if (siblings.length > 1) {
-            const index = siblings.indexOf(el) + 1;
-            return `${tag}:nth-of-type(${index})`;
-          }
-          return tag;
-        };
+        // Reconstructed from the exported `getCssSelector` in this same
+        // module (see its definition above `PageSnapshot` for the full
+        // algorithm/rationale) — single source of truth shared with tests
+        // that exercise it directly against a real Playwright page, instead
+        // of duplicating the implementation here.
+        // eslint-disable-next-line no-new-func
+        const getCssSelector: (el: Element) => string = new Function(`return (${getCssSelectorSource});`)();
 
         // Helper to extract interactive elements for visibleDOMSummary (Preserved 100% for Phase 1)
         const getInteractiveElements = (): InteractiveElement[] => {
@@ -219,7 +346,14 @@ export class AutomationService {
             const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('alt') || el.getAttribute('title') || '';
             const isDisabled = el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('disabled');
             
-            const className = el.className.toLowerCase();
+            // `el.className` is a plain string on HTMLElement but an
+            // SVGAnimatedString (no `.toLowerCase`) on SVGElement — this
+            // selector includes `[role="button"]`/`[role="link"]`/etc,
+            // which also match SVG elements (e.g. an inline SVG used as a
+            // mobile-menu toggle). `getAttribute('class')` returns the raw
+            // attribute value as a string for both HTML and SVG elements,
+            // so it avoids the type difference entirely.
+            const className = (el.getAttribute('class') || '').toLowerCase();
             const isPrimary = className.includes('primary') || className.includes('btn-primary') || typeAttr === 'submit' || el.getAttribute('aria-primary') === 'true';
 
             return {
@@ -267,7 +401,9 @@ export class AutomationService {
 
         // 4. Buttons
         const buttons: ButtonEvidence[] = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]')).map((btn) => {
-          const className = btn.className.toLowerCase();
+          // Same SVGAnimatedString issue as above: this query also matches
+          // `[role="button"]`, which can be an SVG element.
+          const className = (btn.getAttribute('class') || '').toLowerCase();
           const typeAttr = btn.getAttribute('type');
           const isPrimary = className.includes('primary') || className.includes('btn-primary') || typeAttr === 'submit' || btn.getAttribute('aria-primary') === 'true';
           return {
@@ -330,9 +466,38 @@ export class AutomationService {
           };
         });
 
-        // 7. Computed Styles (Limited to 50 key visual/text elements to prevent payload bloat)
-        const styleTargetElements = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, button, [role="button"], a[href], input, select, textarea, label, p')).slice(0, 50);
-        const computedStyles: ComputedStyleEvidence[] = styleTargetElements.map((el) => {
+        // 7. Computed Styles.
+        //
+        // J4 Step 2a (Hardening Post-Fase H): the `.slice(0, 50)` cap used to
+        // apply directly to the query result, meaning any element beyond
+        // position 50 in DOM order was NEVER measured, anywhere, for any
+        // consumer — a silent loss confirmed by the J4 Step 2 design audit
+        // (label/p/standalone-input have no other evidence source at all).
+        //
+        // Fix: query a larger, still-BOUNDED candidate pool
+        // (COMPUTED_STYLE_CANDIDATE_LIMIT = 500 — an order of magnitude
+        // above the existing budget of 50, not "the whole DOM"; a
+        // deliberately simple, explainable starting point, not tuned
+        // against real traffic yet) and compute styles for all of them
+        // once. Two views are then derived from the SAME candidate array:
+        //   - `computedStyles` (UNCHANGED field/semantics): the first 50 in
+        //     DOM order — byte-identical to what `.slice(0, 50)` on the raw
+        //     query always produced. This is the ONLY field
+        //     DeterministicAnalyzer reads (see deterministic-analyzer.
+        //     service.ts, analyzeContrast) — kept 100% stable so the
+        //     contrast rule's findings/statuses/scores never change because
+        //     of this capture change (verified in J4 Step 2's regression
+        //     suite, not just assumed).
+        //   - `computedStylesCandidates` (NEW field): the full bounded pool,
+        //     consumed ONLY by the Gemini-facing dedup+prioritization
+        //     pipeline (evidence-deduplication.service.ts /
+        //     evidence-prioritization.service.ts) — never by
+        //     DeterministicAnalyzer.
+        const COMPUTED_STYLE_CANDIDATE_LIMIT = 500;
+        const styleCandidateElements = Array.from(
+          document.querySelectorAll('h1, h2, h3, h4, h5, h6, button, [role="button"], a[href], input, select, textarea, label, p'),
+        ).slice(0, COMPUTED_STYLE_CANDIDATE_LIMIT);
+        const computedStylesCandidates: ComputedStyleEvidence[] = styleCandidateElements.map((el) => {
           let style: CSSStyleDeclaration | null = null;
           try {
             style = window.getComputedStyle(el);
@@ -351,6 +516,11 @@ export class AutomationService {
             fontFamily: style?.fontFamily || '',
           };
         });
+        // Identical to the old `.slice(0, 50)` on the same query — same
+        // elements, same order, same values (slicing a 500-cap array down
+        // to 50 yields exactly the same first 50 as slicing the unbounded
+        // query directly).
+        const computedStyles: ComputedStyleEvidence[] = computedStylesCandidates.slice(0, 50);
 
         return {
           url: window.location.href,
@@ -364,9 +534,10 @@ export class AutomationService {
           forms,
           landmarks,
           computedStyles,
+          computedStylesCandidates,
           visibleDOMSummary: getInteractiveElements(),
         };
-      });
+      }, getCssSelector.toString());
 
       // Extract accessibility tree using Playwright's native ARIA snapshot API
       let accessibilityTree: string | undefined;
