@@ -14,6 +14,7 @@ import { env } from '@/config/env';
 import { connectToDatabase } from '@/infrastructure/database/mongodb';
 import { createApp } from './app';
 import { APP_NAME, APP_VERSION } from '@/config/constants';
+import { evaluationRepository } from '@/modules/evaluations/evaluation.repository';
 import http from 'http';
 
 async function bootstrap(): Promise<void> {
@@ -23,6 +24,20 @@ async function bootstrap(): Promise<void> {
 
   // ─── Connect to MongoDB ──────────────────────────────────────────────────────
   await connectToDatabase();
+
+  // ─── Reconcile evaluations orphaned by a previous process exit ─────────────────
+  // JobRunner (shared/infrastructure/job-runner.ts) is purely in-memory: a
+  // restart/crash while an evaluation was 'running' leaves it stuck there
+  // forever, with the frontend polling indefinitely. Mark those terminal
+  // before accepting new requests (see reconcileStuckRunning doc comment).
+  const { evaluations: reconciledEvaluations, audits: reconciledAudits } =
+    await evaluationRepository.reconcileStuckRunning();
+  if (reconciledEvaluations > 0 || reconciledAudits > 0) {
+    console.log(
+      `   ⚠️  Reconciled ${reconciledEvaluations} evaluation(s) and ${reconciledAudits} audit(s) ` +
+      `stuck in 'running' from a previous process exit -> marked 'failed'\n`,
+    );
+  }
 
   // ─── Create Express App ──────────────────────────────────────────────────────
   const app = createApp();
