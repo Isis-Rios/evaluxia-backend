@@ -1,5 +1,210 @@
-import { V2AuditFinding } from '@/modules/ai/contracts/ai.contracts';
-import { EvidenceIndex, checkFindingTraceability, isAccessibilityTreeValueTraceable } from './evidence-traceability.service';
+import { V2AuditFinding, TechnicalEvidenceItem } from '@/modules/ai/contracts/ai.contracts';
+import {
+  EvidenceIndex,
+  checkFindingTraceability,
+  isAccessibilityTreeValueTraceable,
+  normalizeSelectorForComparison,
+} from './evidence-traceability.service';
+import { checkClaimConsistency } from './evidence-claim-consistency.service';
+import { classifyDomFact, recommendedStatusForEvidence, ClassifiedEvidenceItem } from '@/shared/testing/automation-signal-taxonomy';
+import { computeContrastFailure } from './deterministic-analyzer.service';
+
+/**
+ * P1.7.3.1 — vocabulario real que puede aparecer en `previousActions`
+ * (`automation.service.ts:executeAction`, `evaluation.service.ts:
+ * resolveActionOutcome`: `Failed to execute: ${error}`, "Timeout Nms
+ * exceeded" de Playwright, "Unsupported action type", "requires a
+ * selector", "no active browser session") y que Gemini podría citar o
+ * parafrasear en `finding.description` al construir un FAIL. El Evidence
+ * Gate NO recibe `previousActions` (ver `processAiFindings`, sin ese
+ * parámetro) -- esta lista, aplicada sobre `description`, es la única señal
+ * disponible en este punto del flujo para detectar que un FAIL depende de
+ * un fallo de automatización. Limitación heurística, documentada (mismo
+ * principio que `STRONG_SPECULATIVE_KEYWORDS` arriba): no sustituye un NLP
+ * real, solo cubre el vocabulario que el propio código produce.
+ */
+export const AUTOMATION_FAILURE_LANGUAGE_PATTERNS = [
+  'timeout',
+  'tiempo de espera agotado',
+  'se agotó el tiempo',
+  'failed to execute',
+  'no se pudo ejecutar',
+  'no pudo ejecutarse',
+  'unsupported action type',
+  'tipo de acción no soportado',
+  'requires a selector',
+  'elemento no encontrado',
+  'element not found',
+  'selector no encontrado',
+  'selector not found',
+  'no active browser session',
+  'no se pudo completar la acción',
+  'la acción no pudo completarse',
+  'no se pudo interactuar',
+  'no respondió a la interacción',
+  'unknown error',
+];
+
+const CONTEXTUAL_SELECTORS = new Set(['document', 'body']);
+
+/**
+ * Mismo predicado de "auto-fundamentación" ya usado por la Gate Rule 0b
+ * (factorizado aquí para reutilizarlo sin cambiar su comportamiento). Incluye
+ * la excepción contextual `document`/`body` -- correcta para el propósito de
+ * 0b (no penalizar evidencia comparativa/contextual legítima), pero
+ * DELIBERADAMENTE NO se reutiliza para decidir pertinencia en la Automation
+ * Signal Protection (ver `isStrictlySelfGrounded` y la auditoría
+ * P1.7.3.1-AUDIT: un `document`/`body` incidental no corrobora una
+ * afirmación sobre un elemento específico).
+ */
+function isEvidenceSelfGrounded(itemSelector: string | undefined, affectedSelector: string | undefined): boolean {
+  return !itemSelector || itemSelector === affectedSelector || CONTEXTUAL_SELECTORS.has(itemSelector);
+}
+
+/**
+ * P1.7.3.1-CORRECTION — auto-fundamentación ESTRICTA para la Automation
+ * Signal Protection: a diferencia de `isEvidenceSelfGrounded` (0b), aquí
+ * `document`/`body` NUNCA cuentan como pertinentes para un elemento
+ * específico -- confirmado por auditoría (script adversarial) que un título
+ * de página o un `font-family` del `body`, citados junto a lenguaje de
+ * timeout, bastaban para preservar indebidamente un FAIL sobre un botón.
+ * Solo el propio selector (o su ausencia, que ya significa "el propio
+ * elemento" por convención del contrato) cuenta aquí.
+ */
+function isStrictlySelfGrounded(itemSelector: string | undefined, affectedSelector: string | undefined): boolean {
+  return !itemSelector || itemSelector === affectedSelector;
+}
+
+/**
+ * P1.7.3.1-CORRECTION — determina si un ítem de evidencia es "pertinente"
+ * como corroboración DOM independiente de una señal de automatización.
+ * Corrige dos huecos confirmados por auditoría (P1.7.3.1-AUDIT):
+ *
+ *   A. `document`/`body` incidentales ya NO cuentan (ver
+ *      `isStrictlySelfGrounded`).
+ *   B. Ya NO basta con que el `selector` coincida: cuando `evidenceIndex`
+ *      está disponible, se exige que `checkClaimConsistency` (J6, ya en
+ *      producción vía `applyClaimConsistency`, reutilizada aquí tal cual,
+ *      sin reimplementarla) marque ESE ítem concreto como `CONSISTENT` --
+ *      es decir, que el par `property`/`value` citado corresponda
+ *      realmente al dato capturado para ese selector, no solo que el
+ *      selector exista.
+ *
+ * LÍMITE DOCUMENTADO Y CONSERVADOR: cuando `evidenceIndex` NO se provee
+ * (compatibilidad con llamadores preexistentes que invocan
+ * `processAiFindings` con 1 argumento), no es posible verificar el valor
+ * real -- se aplica el comportamiento conservador exigido: solo la
+ * auto-fundamentación estricta por selector, documentado como una garantía
+ * MÁS DÉBIL que cuando el índice sí está disponible (que es el caso real en
+ * producción, `audit-engine.service.ts` siempre lo provee).
+ *
+ * ACCESSIBILITY_TREE no pasa por `checkClaimConsistency` (opera sobre
+ * `property`/`value` de los 8 EvidenceKind estructurados, nunca sobre texto
+ * libre) -- conserva su propia verificación dedicada contra el árbol real
+ * (misma prueba que la Gate Rule 0c), con el mismo criterio conservador: sin
+ * árbol provisto, nunca cuenta como pertinente aquí.
+ */
+function isPertinentDomEvidence(
+  item: { type: string; selector?: string; value?: string },
+  itemIndex: number,
+  affectedSelector: string | undefined,
+  claimConsistencyItems: { status: string }[] | undefined,
+  accessibilityTreeText: string | undefined,
+): boolean {
+  if (!isStrictlySelfGrounded(item.selector, affectedSelector)) return false;
+
+  if (item.type === 'ACCESSIBILITY_TREE') {
+    if (!accessibilityTreeText) return false;
+    return typeof item.value === 'string' && isAccessibilityTreeValueTraceable(item.value, accessibilityTreeText);
+  }
+
+  if (!claimConsistencyItems) {
+    // Límite documentado: sin `evidenceIndex` no hay forma de verificar el
+    // valor real -- comportamiento conservador MÁS DÉBIL (solo selector),
+    // nunca se afirma una pertinencia que no puede demostrarse del todo.
+    return true;
+  }
+
+  return claimConsistencyItems[itemIndex]?.status === 'CONSISTENT';
+}
+
+/**
+ * P1.7.3.2 — reconoce `wcagCriterion` para WCAG 1.4.3 en los DOS formatos
+ * reales y schema-válidos confirmados contra el código: con prefijo "WCAG"
+ * (ej. `deterministic-analyzer.service.ts:247`, "WCAG 1.4.3 Contraste
+ * (Mínimo)") y sin él (`finding-contracts.test.ts:56`, "1.4.3 Contraste
+ * (Mínimo)" -- validado como input legítimo de `V2AuditFindingSchema`, el
+ * mismo tipo que recibe `processAiFindings`). Excluye deliberadamente
+ * coincidencias parciales y códigos de cuatro partes (ej. "1.4.3.1") vía el
+ * lookahead negativo y el requisito de que el código termine en espacio o
+ * fin de cadena. No se reutiliza `AuditMetricsService.normalizeCriterionKey`
+ * (comparte esta misma limitación de prefijo obligatorio, y su propósito
+ * declarado -- deduplicación entre orígenes -- es un contrato distinto al
+ * de esta política).
+ */
+const WCAG_143_PATTERN = /^(?:WCAG\s+)?1\.4\.3(?!\.\d)(?:\s|$)/i;
+
+function isWcag143(wcagCriterion: string | null | undefined): boolean {
+  return !!wcagCriterion && WCAG_143_PATTERN.test(wcagCriterion.trim());
+}
+
+/**
+ * P1.7.3.2 — grounding ESTRICTO, exclusivo de esta política, para un ítem
+ * de evidencia `contrastRatio`. Deliberadamente NO reutiliza
+ * `isStrictlySelfGrounded` (P1.7.3.1): aquella trata un `itemSelector`
+ * ausente como implícitamente el propio elemento -- esta política exige un
+ * selector EXPLÍCITO en ambos lados, cada uno normalizado a una cadena NO
+ * vacía, nunca contextual (`document`/`body`), e iguales entre sí tras
+ * normalizar. Confirmado necesario por el caso adversarial de diseño: un
+ * finding puede superar la Gate Rule 0b existente (que exige "al menos un
+ * ítem self-grounded de CUALQUIER tipo") con un ítem `text` self-grounded,
+ * mientras su único ítem `contrastRatio` pertenece a OTRO elemento real --
+ * 0b nunca examina el ítem `contrastRatio` en sí.
+ */
+function isGroundedContrastEvidence(item: TechnicalEvidenceItem, affectedSelectorRaw: string | undefined): boolean {
+  if (!affectedSelectorRaw || !item.selector) return false;
+
+  const normalizedAffected = normalizeSelectorForComparison(affectedSelectorRaw);
+  const normalizedItem = normalizeSelectorForComparison(item.selector);
+  if (!normalizedAffected || !normalizedItem) return false;
+
+  if (CONTEXTUAL_SELECTORS.has(normalizedAffected) || CONTEXTUAL_SELECTORS.has(normalizedItem)) return false;
+
+  return normalizedAffected === normalizedItem;
+}
+
+/**
+ * P1.7.3.2 — precondición de `fontSize` explícitamente interpretable,
+ * exigida ANTES de invocar `computeContrastFailure` con fines de
+ * CONFIRMACIÓN de un FAIL. El formato real de captura (`getComputedStyle().
+ * fontSize`) es siempre "<número>px"; el parseo permisivo que
+ * `computeContrastFailure` aplica internamente (`parseFloat(...) || 16`) es
+ * apropiado para SU PROPIO veredicto autocontenido (analizador
+ * determinístico), nunca como base para confirmar una afirmación ajena
+ * (Gemini) -- esta política nunca delega esa decisión al default interno.
+ */
+const FONT_SIZE_PATTERN = /^-?\d+(\.\d+)?px$/;
+
+function isUsableFontSize(fontSize: string | undefined): boolean {
+  if (!fontSize || !FONT_SIZE_PATTERN.test(fontSize.trim())) return false;
+  const parsed = parseFloat(fontSize);
+  return Number.isFinite(parsed) && parsed > 0;
+}
+
+/**
+ * P1.7.3.2 — mismos tokens que `computeContrastFailure` reconoce
+ * explícitamente (`'normal'`, `'bold'`, o un entero vía `parseInt`),
+ * exigidos de forma explícita antes de confirmar -- mismo principio que
+ * `isUsableFontSize`.
+ */
+function isUsableFontWeight(fontWeight: string | undefined): boolean {
+  if (!fontWeight) return false;
+  const v = fontWeight.trim();
+  if (v === 'normal' || v === 'bold') return true;
+  if (!/^\d+$/.test(v)) return false;
+  const parsed = parseInt(v, 10);
+  return Number.isFinite(parsed) && parsed >= 1 && parsed <= 1000;
+}
 
 /**
  * Hardening (post Gemini Real #1, hallazgo D) — taxonomía de lenguaje
@@ -153,11 +358,10 @@ export class EvidenceGateService {
       // nunca se penaliza (Caso 6, no se rompe).
       if (finding.evidence && finding.evidence.length > 0 && finding.affectedElement?.selector) {
         const affectedSelector = finding.affectedElement.selector;
-        const CONTEXTUAL_SELECTORS = new Set(['document', 'body']);
-        const hasSelfGroundedEvidence = finding.evidence.some((item) => {
-          const itemSelector = item.selector;
-          return !itemSelector || itemSelector === affectedSelector || CONTEXTUAL_SELECTORS.has(itemSelector);
-        });
+        // P1.7.3.1 -- predicado factorizado a `isEvidenceSelfGrounded` (mismo
+        // comportamiento exacto, reutilizado también por la Automation
+        // Signal Protection más abajo).
+        const hasSelfGroundedEvidence = finding.evidence.some((item) => isEvidenceSelfGrounded(item.selector, affectedSelector));
         if (!hasSelfGroundedEvidence) {
           status = 'NOT_EVALUABLE';
           confidence = 'low';
@@ -198,8 +402,139 @@ export class EvidenceGateService {
         }
       }
 
-      // 1. Check for speculative conditional language in description
       const descLower = (finding.description || '').toLowerCase();
+
+      // 0d. Automation Signal Protection (P1.7.3.1) — un FAIL no puede
+      // sustentarse únicamente en que nuestra propia automatización (no la
+      // página) falló: timeout, selector no localizable/accionable, acción
+      // no ejecutada o no soportada. Se activa solo cuando `description`
+      // contiene lenguaje de falla de automatización (ver
+      // AUTOMATION_FAILURE_LANGUAGE_PATTERNS arriba); en ese caso, degrada a
+      // NOT_EVALUABLE salvo que exista al menos un ítem de evidencia
+      // "pertinente" (auto-fundamentado al propio elemento y, si es
+      // ACCESSIBILITY_TREE, verificable contra el árbol real -- ver
+      // `isPertinentDomEvidence`). Reutiliza `classifyDomFact`/
+      // `recommendedStatusForEvidence` de `automation-signal-taxonomy.ts`
+      // tal cual, sin duplicar `canJustifyFail`. Solo actúa sobre FAIL
+      // (nunca PASS, nunca un NOT_EVALUABLE ya existente), nunca genera un
+      // nuevo FAIL, y nunca convierte una señal de automatización en
+      // evidencia DOM -- solo decide si el FAIL puede conservarse.
+      if (status === 'FAIL') {
+        const hasAutomationFailureLanguage = AUTOMATION_FAILURE_LANGUAGE_PATTERNS.some((p) => descLower.includes(p));
+        if (hasAutomationFailureLanguage) {
+          // J6 (`checkClaimConsistency`) reutilizada tal cual, calculada UNA
+          // sola vez por finding -- verifica, para cada ítem, si su
+          // property/value citado corresponde realmente al dato capturado.
+          const claimConsistencyItems = evidenceIndex ? checkClaimConsistency(finding, evidenceIndex).items : undefined;
+          const affectedSelector = finding.affectedElement?.selector;
+          const pertinentEvidence: ClassifiedEvidenceItem[] = (finding.evidence ?? [])
+            .filter((item, itemIndex) => isPertinentDomEvidence(item, itemIndex, affectedSelector, claimConsistencyItems, accessibilityTreeText))
+            .map((item) => classifyDomFact(`${item.type}${item.property ? `:${item.property}` : ''}${item.attribute ? `:${item.attribute}` : ''}`, item));
+
+          if (recommendedStatusForEvidence(pertinentEvidence) === 'NOT_EVALUABLE') {
+            status = 'NOT_EVALUABLE';
+            confidence = 'low';
+          }
+        }
+      }
+
+      // 0e. WCAG 1.4.3 Evidence Sufficiency Gate (P1.7.3.2) — un FAIL de
+      // contraste no puede conservarse solo porque Gemini citó CUALQUIER
+      // evidencia autofundamentada (Gate Rule 0b, arriba, exige eso sobre
+      // CUALQUIER ítem del finding, nunca específicamente sobre el ítem
+      // `contrastRatio`) -- el caso adversarial de diseño demostró que un
+      // finding puede superar 0b con un ítem `text` self-grounded mientras
+      // su único ítem `contrastRatio` pertenece a OTRO elemento real, con
+      // un valor real y correcto para ESE otro elemento (J6/`checkClaim
+      // Consistency` tampoco lo detecta: verifica veracidad por selector
+      // citado, nunca cruza contra `affectedElement.selector`). Esta regla
+      // recalcula el veredicto de contraste desde el MISMO dato real
+      // indexado (nunca desde el valor citado por Gemini), reutilizando
+      // `computeContrastFailure` tal cual -- única llamada a esta función
+      // en todo el Gate. Solo actúa sobre FAIL de WCAG 1.4.3; nunca sobre
+      // PASS, nunca sobre un NOT_EVALUABLE ya existente, y nunca produce una
+      // conclusión de PASS (toda incertidumbre degrada a NOT_EVALUABLE).
+      if (status === 'FAIL' && evidenceIndex && isWcag143(finding.wcagCriterion)) {
+        const affectedSelector = finding.affectedElement?.selector;
+        const contrastEvidenceItems = (finding.evidence ?? []).filter(
+          (item) => (item.property ?? item.attribute) === 'contrastRatio',
+        );
+
+        if (contrastEvidenceItems.length === 0) {
+          // Caso D -- ninguna evidencia primaria de contraste citada.
+          status = 'NOT_EVALUABLE';
+          confidence = 'low';
+        } else {
+          const groundedItems = contrastEvidenceItems.filter((item) => isGroundedContrastEvidence(item, affectedSelector));
+
+          if (groundedItems.length === 0) {
+            // Caso E -- toda la evidencia `contrastRatio` citada pertenece a
+            // otro elemento, es contextual (document/body), carece de
+            // selector explícito, o `affectedSelector` está ausente.
+            status = 'NOT_EVALUABLE';
+            confidence = 'low';
+          } else {
+            const normalizedAffected = normalizeSelectorForComparison(affectedSelector as string);
+            const entry = evidenceIndex.get(normalizedAffected);
+            const computedStyleOccurrences = entry?.occurrences.filter((o) => o.kind === 'computedStyle') ?? [];
+
+            if (!entry || entry.ambiguous || computedStyleOccurrences.length !== 1) {
+              // Entrada inexistente, ambigua (Caso D de J1), o más de un
+              // registro real de estilo para el mismo selector -- ninguno
+              // permite identificar inequívocamente el dato a recalcular.
+              status = 'NOT_EVALUABLE';
+              confidence = 'low';
+            } else {
+              const record = computedStyleOccurrences[0].record;
+              const recordFontSize = record.fontSize as string | undefined;
+              const recordFontWeight = record.fontWeight as string | undefined;
+
+              if (!isUsableFontSize(recordFontSize) || !isUsableFontWeight(recordFontWeight)) {
+                // Caso F -- `fontSize`/`fontWeight` ausentes o no
+                // interpretables: nunca se usa el default interno de
+                // `computeContrastFailure` como base para CONFIRMAR un FAIL.
+                status = 'NOT_EVALUABLE';
+                confidence = 'low';
+              } else {
+                const result = computeContrastFailure({
+                  color: record.color as string,
+                  backgroundColor: record.backgroundColor as string,
+                  fontSize: recordFontSize as string,
+                  fontWeight: recordFontWeight as string,
+                });
+
+                if (result === null || result.inconclusive === true) {
+                  // Caso C -- ratio no calculable (color/fondo no
+                  // parseable, o fondo con transparencia parcial).
+                  status = 'NOT_EVALUABLE';
+                  confidence = 'low';
+                } else if (result.ratio >= result.minRequiredRatio) {
+                  // Caso B -- el dato real CONTRADICE el FAIL de Gemini.
+                  // Nunca se invierte a PASS.
+                  status = 'NOT_EVALUABLE';
+                  confidence = 'low';
+                }
+                // else: Caso A -- ratio real < umbral real -- FAIL
+                // confirmado de forma genuina; status permanece sin cambio.
+              }
+            }
+          }
+        }
+      }
+
+      // [P1.7.3.1 Entrega A — "Rule 0f" (DOM Presence Sufficiency Gate) fue
+      // retirada tras auditoría: no podía verificar de forma independiente
+      // la pertinencia semántica de los hallazgos (coincidir con un código
+      // WCAG + una propiedad ausente no demuestra que la ausencia sea la
+      // causa del problema descrito), degradó hallazgos legítimos por
+      // desajuste de `kind`, e interfirió con hallazgos de propósito
+      // ambiguo (ej. WCAG 2.4.4). La protección de suficiencia de evidencia
+      // para WCAG 4.1.2, 1.1.1, 3.3.2 y 2.4.4 queda pendiente de una
+      // solución arquitectónica futura -- ver informes de auditoría de
+      // P1.7.3.1. Rule 0e (WCAG 1.4.3, puramente numérica, sin este
+      // problema de pertinencia) permanece sin cambios.]
+
+      // 1. Check for speculative conditional language in description
       const hasStrongSpeculativeLanguage = STRONG_SPECULATIVE_KEYWORDS.some((kw) => descLower.includes(kw));
       const hasWeakSpeculativeLanguage = WEAK_SPECULATIVE_KEYWORDS.some((kw) => descLower.includes(kw));
       const hasRealEvidence = !!finding.evidence && finding.evidence.length > 0;

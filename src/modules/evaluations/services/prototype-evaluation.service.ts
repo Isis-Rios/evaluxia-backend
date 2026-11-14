@@ -9,6 +9,7 @@ import { reportRepository } from '@/modules/reports/report.repository';
 import { metricsTracker } from '@/shared/infrastructure/metrics-tracker';
 import { jobRunner } from '@/shared/infrastructure/job-runner';
 import { EVALUATION_STATUS, AUDIT_STATUS } from '@/config/constants';
+import { env } from '@/config/env';
 import {
   prototypeImageUploadService,
   mimeTypeForFormat,
@@ -20,6 +21,7 @@ import { applyCardinalityEnforcement } from '@/shared/testing/wcag-criterion-car
 import { calculatePrototypeMetrics } from './prototype-metrics.service';
 import { RetryOptions } from '@/infrastructure/gemini/gemini.client';
 import { PrototypeAuditFinding } from '@/modules/ai/contracts/prototype.contracts';
+import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.service';
 
 /**
  * P1.6.4.2 Parte 3 — protección determinista MÍNIMA del resumen ejecutivo de
@@ -161,25 +163,61 @@ export class PrototypeEvaluationService {
       // AI multimodal. NUNCA una llamada real en esta fase -- este método
       // llama a `generateMultimodalStructuredWithUsage`, que en los tests de
       // esta fase está siempre mockeado (ver gemini-mock-harness.ts).
-      const auditResult = await aiService.performPrototypeAuditAnalysis({
-        evaluationId,
-        title: evaluation.title,
-        description: evaluation.description || '',
-        archetype: {
-          fullName: profile.fullName,
-          archetype: profile.archetype,
-          profession: profile.profession,
-          phrase: profile.phrase,
-          goals: profile.goals || [],
-          frustrations: profile.frustrations || [],
-          techSavviness: profile.techSavviness,
-          accessibilityNeeds: profile.accessibilityNeeds || [],
-          preferredDevice: profile.preferredDevice,
-          biography: profile.biography,
-        },
-        imageMimeType: mimeTypeForFormat(format),
-        imageBase64: imageBuffer.toString('base64'),
-      }, testRetryOverride);
+      let auditResult: Awaited<ReturnType<typeof aiService.performPrototypeAuditAnalysis>>;
+      try {
+        auditResult = await aiService.performPrototypeAuditAnalysis({
+          evaluationId,
+          title: evaluation.title,
+          description: evaluation.description || '',
+          archetype: {
+            fullName: profile.fullName,
+            archetype: profile.archetype,
+            profession: profile.profession,
+            phrase: profile.phrase,
+            goals: profile.goals || [],
+            frustrations: profile.frustrations || [],
+            techSavviness: profile.techSavviness,
+            accessibilityNeeds: profile.accessibilityNeeds || [],
+            preferredDevice: profile.preferredDevice,
+            biography: profile.biography,
+          },
+          imageMimeType: mimeTypeForFormat(format),
+          imageBase64: imageBuffer.toString('base64'),
+        }, testRetryOverride);
+      } catch (prototypeAiError) {
+        // P1.7.4-A: persistir el detalle de intentos físicos facturados antes
+        // de propagar al catch exterior (que marca FAILED igual que siempre).
+        // Sin intentos adjuntos, no se registra nada.
+        await aiInteractionService.logFailedInvocationFromError(evaluationId, 'PROTOTYPE', undefined, prototypeAiError);
+        throw prototypeAiError;
+      }
+
+      // P1.7.4-A: traza de la invocación PROTOTYPE exitosa (el retorno
+      // temprano J2-CRITICAL no trae attempts — cero llamadas físicas — y no
+      // registra nada). Un fallo de esta escritura nunca hace fallar la
+      // evaluación ya exitosa.
+      if (auditResult.attempts && auditResult.attempts.length > 0) {
+        try {
+          await aiInteractionService.logInvocation({
+            evaluationId,
+            phase: 'PROTOTYPE',
+            executionTimeMs: auditResult.executionTimeMs,
+            requestTokens: auditResult.usage.promptTokens,
+            responseTokens: auditResult.usage.outputTokens,
+            invocationOutcome: 'SUCCESS',
+            attempts: auditResult.attempts,
+          });
+        } catch (traceError) {
+          // P1.7.4-A (punto 2): nunca silencioso, con el mismo contexto
+          // mínimo (evaluationId/phase/resultado) que el camino de fallo;
+          // sin reintentar la escritura; no afecta a la evaluación, que ya
+          // concluyó con éxito.
+          console.error(
+            `[PrototypeEvaluationService] ❌ Fallo al persistir AiInteraction (evaluationId=${evaluationId}, phase=PROTOTYPE, invocationOutcome=SUCCESS) — la traza de esta invocación se pierde; la evaluación continúa sin cambios:`,
+            traceError,
+          );
+        }
+      }
 
       const rawFindings = auditResult.result.findings;
 
@@ -197,16 +235,19 @@ export class PrototypeEvaluationService {
         `consistency: consistent=${consistencySummary.consistent} inconsistent=${consistencySummary.inconsistent} insufficient=${consistencySummary.insufficient})`,
       );
 
-      // 8-9. Consolidación/métricas + persistencia de Finding (FAIL y
-      // NOT_EVALUABLE; PASS nunca se persiste -- P1.5.2/Opción B, mismo
-      // patrón que AuditEngine para WEB). NOT_EVALUABLE aquí siempre
+      // 8-9. Consolidación/métricas + persistencia de Finding (FAIL,
+      // NOT_EVALUABLE y PASS -- P1.7.2 corrige P1.5.2/Opción B: PASS AHORA
+      // SÍ se persiste, mismo cambio aplicado en AuditEngine para WEB, por
+      // la misma razón metodológica: sin el Finding individual, un
+      // criterio "silencioso" era indistinguible entre "Gemini lo marcó
+      // PASS y se descartó" y "nunca se evaluó", violando la regla de no
+      // inferir PASS por ausencia de Finding). NOT_EVALUABLE aquí siempre
       // proviene de un hallazgo real emitido por Gemini para un criterio
       // aplicable concreto, nunca se sintetiza uno para un criterio no
       // mencionado.
       const metrics = calculatePrototypeMetrics(validatedFindings);
 
       for (const f of validatedFindings) {
-        if (f.status === 'PASS') continue;
         await findingService.create(userId, {
           evaluationId: evaluationId as any,
           iteration: 1,
@@ -261,6 +302,9 @@ export class PrototypeEvaluationService {
         screenshotsCount: 1,
         iterationsEvaluated: 1,
         metrics: evaluationMetrics,
+        // P1.7.2 — ver nota equivalente en audit-engine.service.ts.
+        findingPersistencePolicy: 'PASS_PERSISTED' as const,
+        geminiModel: env.GEMINI_MODEL,
         generatedAt: new Date(),
       };
 

@@ -4,6 +4,7 @@ import { evaluationRepository } from '@/modules/evaluations/evaluation.repositor
 import { evaluatorProfileService } from '@/modules/evaluator-profiles/evaluator-profile.service';
 import { findingService } from '@/modules/findings/finding.service';
 import { reportRepository } from '@/modules/reports/report.repository';
+import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.service';
 import { stubGeminiJsonResponses } from '@/shared/testing/gemini-mock-harness';
 import { buildValidPrototypeAuditOutputJson } from '@/shared/testing/prototype-gemini-mock-harness';
 import { EVALUATION_STATUS, AUDIT_STATUS } from '@/config/constants';
@@ -68,6 +69,7 @@ function patchDependencies() {
     reportFindByEvaluationId: reportRepository.findByEvaluationId,
     reportCreate: reportRepository.create,
     readFileSync: fs.readFileSync,
+    logInvocation: aiInteractionService.logInvocation,
   };
 
   const updateCalls: any[] = [];
@@ -81,6 +83,8 @@ function patchDependencies() {
   (findingService as any).create = async () => ({});
   (reportRepository as any).findByEvaluationId = async () => null;
   (reportRepository as any).create = async () => ({});
+  // P1.7.4-A: la traza de invocación PROTOTYPE (éxito o fallo) se captura en memoria (sin MongoDB vivo en este sandbox).
+  (aiInteractionService as any).logInvocation = async (params: any) => params;
   (fs as any).readFileSync = ((path: string, ...rest: any[]) => {
     if (typeof path === 'string' && path.includes('fake-retry-override.png')) {
       return Buffer.from('fake-png-bytes');
@@ -98,6 +102,7 @@ function patchDependencies() {
       (reportRepository as any).findByEvaluationId = originals.reportFindByEvaluationId;
       (reportRepository as any).create = originals.reportCreate;
       (fs as any).readFileSync = originals.readFileSync;
+      (aiInteractionService as any).logInvocation = originals.logInvocation;
     },
   };
 }

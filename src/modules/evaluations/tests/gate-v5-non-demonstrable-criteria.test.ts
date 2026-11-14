@@ -307,6 +307,234 @@ function runTests() {
     assert(metrics.highCount === 1, 'Consolidación: la severidad del FAIL consolidado se preserva correctamente');
   }
 
+  // ==================================================================
+  // SECCIÓN 5 — Regresión P0-1: hallazgos reales de PROTO-02 sin prefijo
+  // "WCAG " (protección Gate V5 + consolidación en calculatePrototypeMetrics
+  // + rechazo de códigos desconocidos fuera del catálogo aplicable).
+  // ==================================================================
+  console.log('--- Sección 5: Regresión P0-1 (hallazgos PROTO-02 sin prefijo "WCAG ") ---');
+  {
+    const proto02FindingsFixture: PrototypeAuditFinding[] = [
+      // 1-2. Dos hallazgos N-06 FAIL
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-06', heuristicName: 'Reconocimiento antes que recuerdo', status: 'FAIL', severity: 'high', recommendation: 'Agregar etiquetas visibles.' }),
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-06', heuristicName: 'Reconocimiento antes que recuerdo', status: 'FAIL', severity: 'medium', recommendation: 'Agregar etiqueta al boletín.' }),
+      // 3-4. Los dos hallazgos críticos de PROTO-02: "1.4.3 Contraste mínimo" SIN prefijo "WCAG ", emitidos como FAIL con visualContrast="appears-low"
+      finding({
+        wcagCriterion: '1.4.3 Contraste mínimo',
+        status: 'FAIL',
+        severity: 'medium',
+        confidence: 'medium',
+        recommendation: 'Aumentar contraste de placeholders.',
+        evidence: [{ type: 'VISUAL_OBSERVATION', property: 'visualContrast', value: 'appears-low', elementDescription: 'placeholders del formulario', region: 'middle-right' }],
+      }),
+      finding({
+        wcagCriterion: '1.4.3 Contraste mínimo',
+        status: 'FAIL',
+        severity: 'low',
+        confidence: 'medium',
+        recommendation: 'Aumentar contraste del copyright.',
+        evidence: [{ type: 'VISUAL_OBSERVATION', property: 'visualContrast', value: 'appears-low', elementDescription: 'texto de copyright en el footer', region: 'bottom-center' }],
+      }),
+      // 5. N-04 FAIL
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-04', heuristicName: 'Consistencia y estándares', status: 'FAIL', severity: 'low', recommendation: 'Unificar estilo de iconos.' }),
+      // 6. N-03 FAIL
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-03', heuristicName: 'Control y libertad del usuario', status: 'FAIL', severity: 'low', recommendation: 'Añadir opción de limpiar.' }),
+      // 7. N-06 FAIL (tercer elemento)
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-06', heuristicName: 'Reconocimiento antes que recuerdo', status: 'FAIL', severity: 'low', recommendation: 'Añadir texto a iconos.' }),
+      // 8. N-05 NOT_EVALUABLE
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-05', heuristicName: 'Prevención de errores', status: 'NOT_EVALUABLE', severity: 'info', confidence: 'low' }),
+      // 9-14. Seis hallazgos PASS (N-02, N-08 y cuatro WCAG sin prefijo: 2.4.6, 1.3.1, 1.4.1, 2.4.4)
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-02', heuristicName: 'Coincidencia entre el sistema y el mundo real', status: 'PASS', severity: 'info' }),
+      finding({ wcagCriterion: undefined, heuristicCode: 'N-08', heuristicName: 'Diseño estético y minimalista', status: 'PASS', severity: 'info' }),
+      finding({ wcagCriterion: '2.4.6 Encabezados y etiquetas', status: 'PASS', severity: 'info' }),
+      finding({ wcagCriterion: '1.3.1 Información y relaciones', status: 'PASS', severity: 'info' }),
+      finding({ wcagCriterion: '1.4.1 Uso del color', status: 'PASS', severity: 'info' }),
+      finding({ wcagCriterion: '2.4.4 Propósito de los enlaces', status: 'PASS', severity: 'info' }),
+    ];
+
+    const gatedProto02 = visualEvidenceGateService.processPrototypeFindings(proto02FindingsFixture);
+
+    // Los dos hallazgos #3 y #4 ("1.4.3 Contraste mínimo" sin prefijo) y el #12 ("1.3.1 Información y relaciones" sin prefijo)
+    // DEBEN ser interceptados por Gate V5 y degradados a NOT_EVALUABLE.
+    assert(
+      gatedProto02[2].status === 'NOT_EVALUABLE' && gatedProto02[2].confidence === 'low' && gatedProto02[2].severity === 'info',
+      'P0-1 (PROTO-02 #3): "1.4.3 Contraste mínimo" (FAIL sin prefijo WCAG) es interceptado por Gate V5 -> NOT_EVALUABLE/low/info',
+    );
+    assert(
+      gatedProto02[3].status === 'NOT_EVALUABLE' && gatedProto02[3].confidence === 'low' && gatedProto02[3].severity === 'info',
+      'P0-1 (PROTO-02 #4): segundo "1.4.3 Contraste mínimo" (FAIL sin prefijo WCAG) es interceptado por Gate V5 -> NOT_EVALUABLE/low/info',
+    );
+    assert(
+      gatedProto02[11].status === 'NOT_EVALUABLE',
+      'P0-1 (PROTO-02 #12): "1.3.1 Información y relaciones" (PASS sin prefijo WCAG) es interceptado por Gate V5 -> NOT_EVALUABLE',
+    );
+
+    // Los criterios WCAG demostrables en imagen sin prefijo (2.4.6, 1.4.1, 2.4.4) sobreviven a Gate V5 y SI cuentan en calculatePrototypeMetrics.
+    const proto02Metrics = calculatePrototypeMetrics(gatedProto02);
+    // Evaluados con PASS o FAIL:
+    // FAIL: N-06, N-04, N-03 (3 criterios, ya que 1.4.3 fue degradado a NOT_EVALUABLE por V5)
+    // PASS: N-02, N-08, WCAG 2.4.6, WCAG 1.4.1, WCAG 2.4.4 (5 criterios, ya que 1.3.1 fue degradado a NOT_EVALUABLE por V5)
+    assert(proto02Metrics.failCount === 3, `P0-1 (PROTO-02): failCount=3 (N-06, N-04, N-03; 1.4.3 ya no se filtra como FAIL), obtenido=${proto02Metrics.failCount}`);
+    assert(proto02Metrics.passCount === 5, `P0-1 (PROTO-02): passCount=5 (N-02, N-08 + los 3 WCAG sin prefijo 2.4.6, 1.4.1, 2.4.4), obtenido=${proto02Metrics.passCount}`);
+    assert(proto02Metrics.coverage.evaluatedCriteria === 8, `P0-1 (PROTO-02): coverage.evaluatedCriteria=8 (3 FAIL + 5 PASS), obtenido=${proto02Metrics.coverage.evaluatedCriteria}`);
+    assert(
+      proto02Metrics.notEvaluableCount === 4 && proto02Metrics.coverage.notEvaluableCriteria === 5,
+      `P0-1 (PROTO-02): notEvaluableCount=4 (solo los 4 Findings explícitos #3, #4, #8 y #12) mientras coverage.notEvaluableCriteria=5 (incluye los 2 criterios silenciosos 3.3.2 y 1.1.1 sin confundirlos con Findings explícitos)`,
+    );
+
+    // Verificar que un código desconocido ("9.9.9") o fuera de alcance visual ("4.1.2") sin prefijo NO se convierte en criterio válido en métricas
+    const withUnknownAndOutOfScope = calculatePrototypeMetrics([
+      ...gatedProto02,
+      finding({ wcagCriterion: '9.9.9 Criterio inventado', status: 'FAIL', severity: 'critical', recommendation: 'rec' }),
+      finding({ wcagCriterion: '4.1.2 Nombre, función, valor', status: 'FAIL', severity: 'critical', recommendation: 'rec' }),
+    ]);
+    assert(
+      withUnknownAndOutOfScope.coverage.evaluatedCriteria === 8 && withUnknownAndOutOfScope.failCount === 3,
+      'P0-1: Códigos fuera del catálogo aplicable ("9.9.9" o "4.1.2" sin prefijo) nunca son aceptados como criterios válidos en calculatePrototypeMetrics',
+    );
+
+    // Cobertura explícita sin prefijo "WCAG " para los otros dos criterios no demostrables en imagen estática:
+    // - "3.3.2 Etiquetas o instrucciones" (FAIL y PASS, con evidencia visual de placeholders / etiquetas de formulario)
+    // - "1.1.1 Contenido no textual" (FAIL y PASS, con evidencia visual de imagen cuya alternativa textual no es verificable en captura estática)
+    const prefixless332And111Cases: PrototypeAuditFinding[] = [
+      finding({
+        wcagCriterion: '3.3.2 Etiquetas o instrucciones',
+        status: 'FAIL',
+        severity: 'high',
+        confidence: 'high',
+        description: 'Los campos del formulario utilizan placeholders como sustitutos de etiquetas visibles permanentes.',
+        recommendation: 'Asociar etiquetas <label> visibles y programáticas a cada campo del formulario.',
+        evidence: [
+          {
+            type: 'VISUAL_OBSERVATION',
+            property: 'visualLabel',
+            value: '',
+            elementDescription: 'campos de entrada del formulario de contacto que muestran únicamente placeholder sin etiqueta visible',
+            region: 'middle-right',
+          },
+        ],
+      }),
+      finding({
+        wcagCriterion: '3.3.2 Etiquetas o instrucciones',
+        status: 'PASS',
+        severity: 'info',
+        confidence: 'high',
+        description: 'Se observa etiqueta visible junto al campo de correo electrónico.',
+        recommendation: null,
+        evidence: [
+          {
+            type: 'VISUAL_OBSERVATION',
+            property: 'visualLabel',
+            value: 'Correo electrónico',
+            elementDescription: 'etiqueta visible sobre el campo de correo electrónico del formulario',
+            region: 'middle-right',
+          },
+        ],
+      }),
+      finding({
+        wcagCriterion: '1.1.1 Contenido no textual',
+        status: 'FAIL',
+        severity: 'high',
+        confidence: 'high',
+        description: 'La imagen del mapa y los iconos gráficos no permiten verificar una alternativa textual equivalente en la captura estática.',
+        recommendation: 'Definir un atributo alt descriptivo para la imagen del mapa.',
+        evidence: [
+          {
+            type: 'VISUAL_OBSERVATION',
+            property: 'visibleText',
+            value: '',
+            elementDescription: 'imagen estática del mapa de ubicación sin alternativa textual programática verificable',
+            region: 'bottom-left',
+          },
+        ],
+      }),
+      finding({
+        wcagCriterion: '1.1.1 Contenido no textual',
+        status: 'PASS',
+        severity: 'info',
+        confidence: 'high',
+        description: 'La imagen del mapa presenta un rótulo visual adyacente.',
+        recommendation: null,
+        evidence: [
+          {
+            type: 'VISUAL_OBSERVATION',
+            property: 'visibleText',
+            value: 'Ubicación de la oficina principal',
+            elementDescription: 'imagen del mapa con rótulo visual en la sección inferior',
+            region: 'bottom-left',
+          },
+        ],
+      }),
+    ];
+
+    const gated332And111 = visualEvidenceGateService.processPrototypeFindings(prefixless332And111Cases);
+
+    assert(
+      gated332And111[0].status === 'NOT_EVALUABLE' &&
+        gated332And111[0].confidence === 'low' &&
+        gated332And111[0].severity === 'info' &&
+        gated332And111[0].recommendation === null,
+      'P0-1 (Gate V5 sin prefijo): "3.3.2 Etiquetas o instrucciones" con estado original FAIL (placeholders como sustitutos de etiquetas) es interceptado y degradado a NOT_EVALUABLE/low/info/rec=null',
+    );
+    assert(
+      gated332And111[1].status === 'NOT_EVALUABLE' &&
+        gated332And111[1].confidence === 'low' &&
+        gated332And111[1].severity === 'info' &&
+        gated332And111[1].recommendation === null,
+      'P0-1 (Gate V5 sin prefijo): "3.3.2 Etiquetas o instrucciones" con estado original PASS es interceptado y degradado a NOT_EVALUABLE/low/info/rec=null',
+    );
+    assert(
+      gated332And111[2].status === 'NOT_EVALUABLE' &&
+        gated332And111[2].confidence === 'low' &&
+        gated332And111[2].severity === 'info' &&
+        gated332And111[2].recommendation === null,
+      'P0-1 (Gate V5 sin prefijo): "1.1.1 Contenido no textual" con estado original FAIL (imagen sin alternativa verificable) es interceptado y degradado a NOT_EVALUABLE/low/info/rec=null',
+    );
+    assert(
+      gated332And111[3].status === 'NOT_EVALUABLE' &&
+        gated332And111[3].confidence === 'low' &&
+        gated332And111[3].severity === 'info' &&
+        gated332And111[3].recommendation === null,
+      'P0-1 (Gate V5 sin prefijo): "1.1.1 Contenido no textual" con estado original PASS es interceptado y degradado a NOT_EVALUABLE/low/info/rec=null',
+    );
+    assert(
+      gated332And111.every((f) => f.status !== 'FAIL' && f.status !== 'PASS'),
+      'P0-1 (Gate V5 sin prefijo): ninguno de los 4 casos (3.3.2 FAIL/PASS, 1.1.1 FAIL/PASS) permanece como FAIL o PASS',
+    );
+
+    const isolated332And111Metrics = calculatePrototypeMetrics(gated332And111);
+    assert(
+      isolated332And111Metrics.failCount === 0 && isolated332And111Metrics.passCount === 0,
+      `P0-1 (Métricas 3.3.2/1.1.1 sin prefijo): no incrementan failCount (0) ni passCount (0), obtenido fail=${isolated332And111Metrics.failCount} pass=${isolated332And111Metrics.passCount}`,
+    );
+    assert(
+      isolated332And111Metrics.coverage.evaluatedCriteria === 0 &&
+        isolated332And111Metrics.coverage.notEvaluableCriteria === 13,
+      `P0-1 (Cobertura 3.3.2/1.1.1 sin prefijo): no incrementan coverage.evaluatedCriteria (0) y coverage.notEvaluableCriteria=13, obtenido evaluated=${isolated332And111Metrics.coverage.evaluatedCriteria} notEvaluable=${isolated332And111Metrics.coverage.notEvaluableCriteria}`,
+    );
+    assert(
+      isolated332And111Metrics.notEvaluableCount === 4,
+      `P0-1 (Conteo explícito 3.3.2/1.1.1 sin prefijo): los 4 Findings explícitos degradados se reflejan en notEvaluableCount=4 (a diferencia de los 11 criterios silenciosos restantes que no suman a notEvaluableCount), obtenido=${isolated332And111Metrics.notEvaluableCount}`,
+    );
+
+    // Al incorporar un Finding explícito de 3.3.2 (FAIL degradado) y uno de 1.1.1 (FAIL degradado) al fixture de PROTO-02:
+    // - failCount (3), passCount (5), evaluatedCriteria (8) y coverage.notEvaluableCriteria (5) permanecen idénticos;
+    // - notEvaluableCount sube de 4 a 6, distinguiendo inequívocamente entre criterio silencioso (sin Finding) y Finding explícito NOT_EVALUABLE.
+    const proto02WithExplicit332And111 = calculatePrototypeMetrics([
+      ...gatedProto02,
+      gated332And111[0], // 3.3.2 degradado a NOT_EVALUABLE
+      gated332And111[2], // 1.1.1 degradado a NOT_EVALUABLE
+    ]);
+    assert(
+      proto02WithExplicit332And111.failCount === 3 &&
+        proto02WithExplicit332And111.passCount === 5 &&
+        proto02WithExplicit332And111.coverage.evaluatedCriteria === 8 &&
+        proto02WithExplicit332And111.coverage.notEvaluableCriteria === 5 &&
+        proto02WithExplicit332And111.notEvaluableCount === 6,
+      'P0-1 (Distinción explícito vs silencioso en PROTO-02): al pasar 3.3.2 y 1.1.1 de silenciosos a Findings explícitos degradados por Gate V5, evaluatedCriteria sigue en 8 y notEvaluableCriteria en 5, pero notEvaluableCount sube de 4 a 6',
+    );
+  }
+
   console.log(`\n========================================`);
   console.log(`Results: ${passed} passed, ${failed} failed.`);
   console.log(`========================================\n`);

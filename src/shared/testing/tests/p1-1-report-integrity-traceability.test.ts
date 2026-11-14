@@ -23,12 +23,11 @@ async function main() {
 
   // -----------------------------------------------------------------
   // Parte B — buildMetricsAudit: coherencia entre el desglose y el
-  // conjunto real de hallazgos consolidados.
+  // conjunto real de hallazgos consolidados (política vigente P1.7.2 / P0-2:
+  // PASS_PERSISTED -> se persisten FAIL, NOT_EVALUABLE y PASS).
   // -----------------------------------------------------------------
   console.log('--- Parte B: buildMetricsAudit ---');
   {
-    // Reproduce la forma real del incidente: 8 FAIL (persistidos), más
-    // hallazgos PASS/NOT_EVALUABLE que NUNCA se persisten como Finding.
     const consolidated = [
       ...Array(8).fill({ status: 'FAIL' }),
       ...Array(4).fill({ status: 'NOT_EVALUABLE' }),
@@ -39,15 +38,17 @@ async function main() {
     assert(audit.consolidatedByStatus.FAIL === 8, 'consolidatedByStatus.FAIL cuenta exactamente los 8 FAIL reales');
     assert(audit.consolidatedByStatus.NOT_EVALUABLE === 4, 'consolidatedByStatus.NOT_EVALUABLE cuenta los 4 hallazgos NOT_EVALUABLE');
     assert(audit.consolidatedByStatus.PASS === 2, 'consolidatedByStatus.PASS cuenta los 2 PASS');
-    // P1.6.2 Parte A — expectedPersistedFindingsCount ahora refleja la
-    // política real post-P1.5.2 (FAIL + NOT_EVALUABLE), no solo FAIL.
-    assert(audit.expectedPersistedFindingsCount === 12, 'expectedPersistedFindingsCount = FAIL(8) + NOT_EVALUABLE(4) = 12, política P1.5.2');
+    // P0-2 (alineado con P1.7.2 PASS_PERSISTED) — expectedPersistedFindingsCount
+    // ahora contempla FAIL + NOT_EVALUABLE + PASS (8 + 4 + 2 = 14).
+    assert(audit.expectedPersistedFindingsCount === 14, 'P0-2: expectedPersistedFindingsCount = FAIL(8) + NOT_EVALUABLE(4) + PASS(2) = 14, política PASS_PERSISTED (P1.7.2)');
     assert(
       audit.consolidatedByStatus.FAIL + audit.consolidatedByStatus.PASS + audit.consolidatedByStatus.NOT_EVALUABLE === consolidated.length,
-      'La suma del desglose reconstruye el tamaño real del conjunto consolidado completo (14), no solo lo persistido',
+      'La suma del desglose reconstruye el tamaño real del conjunto consolidado completo (14)',
     );
     assert(typeof audit.note === 'string' && audit.note.length > 0, 'Incluye una nota explicativa legible, no solo números');
-    assert(!audit.note.includes('solo status=FAIL se persiste'), 'La nota ya NO afirma que únicamente se persisten hallazgos FAIL (texto obsoleto desde P1.5.2)');
+    assert(!audit.note.includes('solo status=FAIL se persiste'), 'La nota ya NO afirma que únicamente se persisten hallazgos FAIL');
+    assert(!audit.note.includes('PASS nunca se persiste'), 'P0-2: La nota ya NO afirma "PASS nunca se persiste" (texto desactualizado de P1.5.2 eliminado)');
+    assert(audit.note.includes('PASS_PERSISTED'), 'P0-2: La nota refleja explícitamente la política vigente PASS_PERSISTED');
     assert(audit.persistedFindingsCount === undefined, 'Sin un conteo real provisto, persistedFindingsCount queda undefined -- nunca se inventa un número como si fuera una verificación de MongoDB');
 
     const empty = buildMetricsAudit([]);
@@ -58,40 +59,38 @@ async function main() {
   }
 
   // -----------------------------------------------------------------
-  // Parte B.2 (P1.6.2 Parte A) — buildMetricsAudit con el conteo REAL de
-  // persistencia provisto (2º argumento), reproduciendo exactamente el
-  // defecto confirmado en la auditoría post-piloto P1.6.1: el piloto real
-  // `6ae53c5ac54be00390d0ca8f` tenía 16 FAIL + 4 NOT_EVALUABLE
-  // consolidados, 20 documentos realmente persistidos, pero
-  // `persistedFindingsCount` reportaba 16.
+  // Parte B.2 (P1.6.2 Parte A + P0-2) — buildMetricsAudit con el conteo REAL
+  // de persistencia provisto (2º argumento) bajo la política vigente
+  // PASS_PERSISTED (P1.7.2), verificando también los casos reales de las
+  // corridas WEB de comparación (187 = 3 FAIL + 3 NOT_EVALUABLE + 181 PASS).
   // -----------------------------------------------------------------
-  console.log('\n--- Parte B.2: buildMetricsAudit con conteo real de persistencia (P1.6.2) ---');
+  console.log('\n--- Parte B.2: buildMetricsAudit con conteo real de persistencia (P1.6.2 + P0-2 PASS_PERSISTED) ---');
   {
-    const consolidatedRealPilot = [
-      ...Array(16).fill({ status: 'FAIL' }),
-      ...Array(4).fill({ status: 'NOT_EVALUABLE' }),
-      ...Array(81).fill({ status: 'PASS' }),
+    const consolidatedRealWebRun = [
+      ...Array(3).fill({ status: 'FAIL' }),
+      ...Array(3).fill({ status: 'NOT_EVALUABLE' }),
+      ...Array(181).fill({ status: 'PASS' }),
     ];
 
-    // Caso FAIL + NOT_EVALUABLE: el conteo real coincide con el esperado
-    // (20 = 16 + 4) -- el comportamiento correcto post-P1.5.2.
-    const auditMatching = buildMetricsAudit(consolidatedRealPilot, 20);
-    assert(auditMatching.expectedPersistedFindingsCount === 20, 'expectedPersistedFindingsCount = 16 FAIL + 4 NOT_EVALUABLE = 20, reproduce el piloto real P1.6.1');
-    assert(auditMatching.persistedFindingsCount === 20, 'persistedFindingsCount real (provisto) = 20, YA NO se queda congelado en 16 como antes de P1.6.2');
-    assert(!auditMatching.note.includes('ADVERTENCIA'), 'Sin discrepancia entre esperado y real, no se agrega ninguna advertencia a la nota');
+    // Caso FAIL + NOT_EVALUABLE + PASS: el conteo real persistido (187) coincide
+    // con el esperado (3 + 3 + 181 = 187) -- sin advertencia falsa de fallo parcial.
+    const auditMatching = buildMetricsAudit(consolidatedRealWebRun, 187);
+    assert(auditMatching.expectedPersistedFindingsCount === 187, 'P0-2: expectedPersistedFindingsCount = 3 FAIL + 3 NOT_EVALUABLE + 181 PASS = 187 (corrida real WEB 2.5 Flash)');
+    assert(auditMatching.persistedFindingsCount === 187, 'persistedFindingsCount real (provisto) = 187');
+    assert(!auditMatching.note.includes('ADVERTENCIA'), 'P0-2: Sin discrepancia entre esperado (187) y real (187), NO se emite advertencia falsa de fallo parcial de persistencia');
 
-    // Caso PASS: confirmar explícitamente que un PASS nunca contribuye a
-    // ninguno de los dos conteos de persistencia.
-    const onlyPass = buildMetricsAudit([{ status: 'PASS' }, { status: 'PASS' }, { status: 'PASS' }], 0);
-    assert(onlyPass.expectedPersistedFindingsCount === 0, 'PASS nunca cuenta para expectedPersistedFindingsCount');
-    assert(onlyPass.persistedFindingsCount === 0, 'PASS nunca cuenta para persistedFindingsCount real');
+    // Caso solo PASS: bajo PASS_PERSISTED, 3 hallazgos PASS sí cuentan en expectedPersistedFindingsCount (3).
+    const onlyPass = buildMetricsAudit([{ status: 'PASS' }, { status: 'PASS' }, { status: 'PASS' }], 3);
+    assert(onlyPass.expectedPersistedFindingsCount === 3, 'P0-2: Bajo PASS_PERSISTED, 3 hallazgos PASS cuentan como expectedPersistedFindingsCount = 3');
+    assert(onlyPass.persistedFindingsCount === 3, 'persistedFindingsCount real = 3');
+    assert(!onlyPass.note.includes('ADVERTENCIA'), 'Sin advertencia cuando los 3 PASS se persisten correctamente');
 
     // Caso de discrepancia real (p. ej. una creación individual falló
-    // silenciosamente antes del catch general): el real (19) no coincide
-    // con el esperado (20) -- esto debe ser VISIBLE en la nota, no ocultado.
-    const auditMismatch = buildMetricsAudit(consolidatedRealPilot, 19);
-    assert(auditMismatch.expectedPersistedFindingsCount === 20 && auditMismatch.persistedFindingsCount === 19, 'Una discrepancia real entre esperado (20) y persistido (19) se preserva sin corregirse artificialmente');
-    assert(auditMismatch.note.includes('ADVERTENCIA') && auditMismatch.note.includes('19') && auditMismatch.note.includes('20'), 'La nota señala explícitamente la discrepancia real detectada, con ambos números');
+    // silenciosamente antes del catch general): el real (186) no coincide
+    // con el esperado (187) -- esto debe seguir siendo VISIBLE en la nota.
+    const auditMismatch = buildMetricsAudit(consolidatedRealWebRun, 186);
+    assert(auditMismatch.expectedPersistedFindingsCount === 187 && auditMismatch.persistedFindingsCount === 186, 'Una discrepancia real entre esperado (187) y persistido (186) se preserva sin corregirse artificialmente');
+    assert(auditMismatch.note.includes('ADVERTENCIA') && auditMismatch.note.includes('186') && auditMismatch.note.includes('187'), 'La nota señala explícitamente la discrepancia real detectada, con ambos números');
   }
 
   // -----------------------------------------------------------------

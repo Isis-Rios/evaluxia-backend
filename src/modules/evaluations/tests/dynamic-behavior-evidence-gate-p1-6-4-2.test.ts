@@ -230,9 +230,10 @@ async function runTests() {
 }
 
 /**
- * Regresión extremo a extremo de P1.5.2 (persistencia FAIL+NOT_EVALUABLE,
- * PASS nunca persiste) + Caso I (disclaimer del resumen ejecutivo),
- * reutilizando el mismo mecanismo de mocks ya validado en P1.5.2/P1.6.4.
+ * Regresión extremo a extremo de P1.5.2/P1.7.2 (persistencia de
+ * FAIL+NOT_EVALUABLE+PASS, los tres) + Caso I (disclaimer del resumen
+ * ejecutivo), reutilizando el mismo mecanismo de mocks ya validado en
+ * P1.5.2/P1.6.4.
  */
 async function runEndToEndTests(assert: (c: boolean, m: string) => void) {
   console.log('\n--- Extremo a extremo: persistencia (P1.5.2) + disclaimer del resumen (Caso I) ---');
@@ -322,7 +323,7 @@ async function runEndToEndTests(assert: (c: boolean, m: string) => void) {
 
     assert(!!persistedN05 && persistedN05.status === 'NOT_EVALUABLE', '12. Regresión P1.5.2 extremo a extremo: N-05 (variante corregida) persiste NOT_EVALUABLE');
     assert(!!persistedContrast && persistedContrast.status === 'FAIL', '13. Regresión P1.5.2 extremo a extremo: contraste persiste FAIL sin cambios');
-    assert(!persistedPass, '14. Regresión P1.5.2 extremo a extremo: PASS sigue sin persistirse');
+    assert(!!persistedPass && persistedPass.status === 'PASS', '14. Regresión P1.7.2 extremo a extremo: PASS (N-04) AHORA TAMBIÉN persiste con status PASS');
 
     assert(!!capturedReport, '15. Caso I: el Report se generó');
     assert(capturedReport.summary.includes('no pudieron verificarse con la imagen disponible'), '16. Caso I: el resumen incluye la aclaración determinista sobre criterios NOT_EVALUABLE (al existir al menos uno)');

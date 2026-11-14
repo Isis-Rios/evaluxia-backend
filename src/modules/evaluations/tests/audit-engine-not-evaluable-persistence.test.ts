@@ -5,18 +5,24 @@ import { snapshotEvidenceService } from '@/modules/snapshots/snapshot-evidence.s
 import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.service';
 import { findingService } from '@/modules/findings/finding.service';
 import { reportRepository } from '@/modules/reports/report.repository';
+import { Report } from '@/modules/reports/report.model';
 import { stubGeminiJsonResponses, buildValidAuditOutputJson } from '@/shared/testing/gemini-mock-harness';
 
 /**
- * P1.5.2 (Opción B autorizada) — confirma, usando el camino REAL completo
- * (`auditEngine.performAudit()` -> `aiService.performAuditAnalysis()` ->
- * `GeminiClient` interceptado, ninguno de los pasos intermedios mockeado:
- * EvidenceGate/J1, cardinalidad J6, consolidación), que:
+ * P1.5.2 (Opción B autorizada), actualizado en P1.7.2 — confirma, usando el
+ * camino REAL completo (`auditEngine.performAudit()` ->
+ * `aiService.performAuditAnalysis()` -> `GeminiClient` interceptado, ninguno
+ * de los pasos intermedios mockeado: EvidenceGate/J1, cardinalidad J6,
+ * consolidación), que:
  *
  *   1. Un hallazgo FAIL sigue persistiendo (comportamiento intacto).
  *   2. Un hallazgo NOT_EVALUABLE (generado explícitamente por Gemini, no
  *      sintetizado) AHORA persiste -- antes de P1.5.2 se perdía en silencio.
- *   3. Un hallazgo PASS NUNCA persiste (sin cambios respecto a antes).
+ *   3. Un hallazgo PASS AHORA TAMBIÉN persiste (P1.7.2, corrige P1.5.2):
+ *      sin el Finding individual, un criterio "silencioso" era
+ *      indistinguible entre "Gemini lo marcó PASS y se descartó" y "nunca
+ *      se evaluó", violando la regla metodológica de no inferir PASS por
+ *      ausencia de Finding (auditoría P1.7.1/P1.7.2).
  *   4. El documento `Finding` persistido para NOT_EVALUABLE conserva status,
  *      descripción, evidencia y criterio originales intactos.
  *   5. Las métricas del Report (failCount/passCount/notEvaluableCount/
@@ -24,6 +30,8 @@ import { stubGeminiJsonResponses, buildValidAuditOutputJson } from '@/shared/tes
  *      `calculateMetrics` -- ese cálculo ocurre ANTES del loop de
  *      persistencia modificado, así que estos números no pueden haber
  *      cambiado por este fix (verificado aquí, no solo asumido).
+ *   6. `findingPersistencePolicy`/`geminiModel` quedan asignados en el
+ *      Report (P1.7.2).
  *
  * Mocks: mismo mecanismo ya validado en
  * `prototype-evaluation-retry-override.test.ts` (parchear el método en el
@@ -143,6 +151,7 @@ function patchDependencies() {
     profileFindById: evaluatorProfileService.findById,
     getEvidencesForEvaluation: snapshotEvidenceService.getEvidencesForEvaluation,
     getInteractions: aiInteractionService.getInteractions,
+    logInvocation: aiInteractionService.logInvocation,
     findingCreate: findingService.create,
     reportFindByEvaluationId: reportRepository.findByEvaluationId,
     reportCreate: reportRepository.create,
@@ -156,6 +165,8 @@ function patchDependencies() {
   (evaluatorProfileService as any).findById = async () => fakeProfile();
   (snapshotEvidenceService as any).getEvidencesForEvaluation = async () => fixtureEvidence;
   (aiInteractionService as any).getInteractions = async () => [];
+  // P1.7.4-A: la traza de invocación PHASE_2 se captura en memoria (sin MongoDB vivo en este sandbox).
+  (aiInteractionService as any).logInvocation = async (params: any) => params;
   (findingService as any).create = async (_userId: string, dto: any) => {
     createdFindings.push(dto);
     return dto;
@@ -175,6 +186,7 @@ function patchDependencies() {
       (evaluatorProfileService as any).findById = originals.profileFindById;
       (snapshotEvidenceService as any).getEvidencesForEvaluation = originals.getEvidencesForEvaluation;
       (aiInteractionService as any).getInteractions = originals.getInteractions;
+      (aiInteractionService as any).logInvocation = originals.logInvocation;
       (findingService as any).create = originals.findingCreate;
       (reportRepository as any).findByEvaluationId = originals.reportFindByEvaluationId;
       (reportRepository as any).create = originals.reportCreate;
@@ -204,10 +216,12 @@ async function runTests() {
     const persistedFail = createdFindings.find((f) => f.heuristicCode === 'N-03');
     const persistedNotEvaluable = createdFindings.find((f) => f.wcagCriterion === 'WCAG 1.3.1 Información y relaciones');
     const persistedPass = createdFindings.find((f) => f.heuristicCode === 'N-08');
+    const persistedDeterministicPass = createdFindings.find((f) => f.wcagCriterion === 'WCAG 4.1.2 Nombre, función y valor');
 
     assert(!!persistedFail && persistedFail.status === 'FAIL', '1. El hallazgo FAIL (N-03) persiste con status FAIL (comportamiento intacto)');
     assert(!!persistedNotEvaluable && persistedNotEvaluable.status === 'NOT_EVALUABLE', '2. El hallazgo NOT_EVALUABLE (WCAG 1.3.1) AHORA persiste con status NOT_EVALUABLE');
-    assert(!persistedPass, '3. El hallazgo PASS (N-08) NUNCA persiste (sin cambios respecto a antes de P1.5.2)');
+    assert(!!persistedPass && persistedPass.status === 'PASS', '3. El hallazgo PASS de IA (N-08) AHORA SÍ persiste con status PASS (P1.7.2, corrige P1.5.2)');
+    assert(!!persistedDeterministicPass && persistedDeterministicPass.status === 'PASS', '3b. El hallazgo PASS determinístico (WCAG 4.1.2) AHORA TAMBIÉN persiste con status PASS');
 
     assert(
       persistedNotEvaluable?.description === aiNotEvaluableFinding.description,
@@ -246,6 +260,29 @@ async function runTests() {
     assert(reportData?.notEvaluableCount === 17, `5c. notEvaluableCount=17 (criterios nunca tocados; el NOT_EVALUABLE de IA no incrementa este número, solo ahora SÍ se persiste como Finding), obtenido=${reportData?.notEvaluableCount}`);
     assert(reportData?.passCount === 2, `5d. passCount=2 (N-08 de IA + WCAG 4.1.2 determinístico del botón), obtenido=${reportData?.passCount}`);
     assert(reportData?.totalFindings === 1, `5e. totalFindings=1 (único criterio consolidado en FAIL), obtenido=${reportData?.totalFindings}`);
+
+    // 6. P1.7.2 -- sin duplicación introducida por el cambio: exactamente 1
+    // Finding persistido por cada uno de los 4 criterios distintos de este
+    // fixture (FAIL N-03, NOT_EVALUABLE WCAG 1.3.1, PASS N-08, PASS WCAG
+    // 4.1.2) -- 4 documentos en total, ninguno repetido.
+    assert(createdFindings.length === 4, `6a. Se persisten exactamente 4 Findings (uno por criterio consolidado, sin duplicación), obtenido=${createdFindings.length}`);
+
+    // 7. P1.7.2 -- nuevos campos de política/modelo en el Report.
+    assert(reportData?.findingPersistencePolicy === 'PASS_PERSISTED', `7a. findingPersistencePolicy='PASS_PERSISTED', obtenido=${reportData?.findingPersistencePolicy}`);
+    assert(typeof reportData?.geminiModel === 'string' && reportData.geminiModel.length > 0, `7b. geminiModel se asigna como string no vacío, obtenido=${JSON.stringify(reportData?.geminiModel)}`);
+
+    // 8. P1-1 -- tras retirar los defaults numéricos en ReportSchema, el flujo
+    // WEB sigue poblando explícitamente todos sus campos de cobertura y
+    // cumplimiento, y la serialización de Mongoose (`new Report(reportData).toJSON()`)
+    // conserva intactas todas las métricas que consume el frontend.
+    const serializedWebReport = new Report(reportData).toJSON();
+    assert(serializedWebReport.totalCriteria === 20, `8a. P1-1 (WEB): totalCriteria=20 conservado explícitamente tras retirar default, obtenido=${serializedWebReport.totalCriteria}`);
+    assert(serializedWebReport.evaluatedCriteria === 3, `8b. P1-1 (WEB): evaluatedCriteria=3 (1 FAIL + 2 PASS), obtenido=${serializedWebReport.evaluatedCriteria}`);
+    assert(serializedWebReport.auditCoverage === 15, `8c. P1-1 (WEB): auditCoverage=15% (3/20), obtenido=${serializedWebReport.auditCoverage}`);
+    assert(serializedWebReport.nielsenCoverage === 20, `8d. P1-1 (WEB): nielsenCoverage=20% (2/10), obtenido=${serializedWebReport.nielsenCoverage}`);
+    assert(serializedWebReport.wcagCoverage === 10, `8e. P1-1 (WEB): wcagCoverage=10% (1/10), obtenido=${serializedWebReport.wcagCoverage}`);
+    assert(serializedWebReport.nielsenCompliance === 50 && serializedWebReport.wcagCompliance === 100, '8f. P1-1 (WEB): nielsenCompliance (50%) y wcagCompliance (100%) intactos tras serialización Mongoose');
+    assert(typeof serializedWebReport.overallScore === 'number', '8g. P1-1 (WEB): overallScore numérico presente para EvaluationSummary');
   } finally {
     stub.restore();
     deps.restore();

@@ -21,6 +21,101 @@ export interface GeminiStructuredResponse<T> {
    * read `usage` are entirely unaffected.
    */
   retryAccounting?: { attempts: number; cumulativeUsage: TokenUsage };
+  /**
+   * P1.7.4-A — OPTIONAL, additive. Detalle de CADA intento físico realizado
+   * contra el proveedor durante esta invocación lógica (incluidos los
+   * fallidos-pero-facturados que `attemptUsages`/`retryAccounting` ya
+   * capturan, Y los que esos mecanismos NO capturan: respuestas vacías y
+   * errores de transporte). Es un canal paralelo e independiente —
+   * `usage`/`retryAccounting` conservan exactamente su semántica previa.
+   */
+  attempts?: GeminiAttemptRecord[];
+}
+
+/** P1.7.4-A — resultado de un intento físico individual contra Gemini. */
+export type GeminiAttemptOutcome =
+  | 'SUCCESS'
+  | 'SCHEMA_MISMATCH'
+  | 'INVALID_JSON'
+  | 'EMPTY_RESPONSE'
+  | 'PROVIDER_ERROR';
+
+export interface GeminiAttemptRecord {
+  /** Ordinal físico (1-based), asignado al INICIO del intento. */
+  attemptNumber: number;
+  /** `env.GEMINI_MODEL` en el momento de la llamada — lo SOLICITADO. */
+  modelRequested: string;
+  /**
+   * `response.modelVersion` — lo que EFECTIVAMENTE respondió, según Google.
+   * Ausente (key no presente) = no hubo objeto de respuesta (PROVIDER_ERROR);
+   * `null` = hubo respuesta pero Google no informó el campo;
+   * string = informado. Nunca se sustituye por `modelRequested`.
+   */
+  modelVersionEffective?: string | null;
+  outcome: GeminiAttemptOutcome;
+  /** Solo PROVIDER_ERROR: la razón ya clasificada por `classifyAiError`. */
+  errorReason?: string;
+  /**
+   * `null` cuando no existe dato real ni estimable (PROVIDER_ERROR, o
+   * EMPTY_RESPONSE sin usageMetadata). En los casos con texto conserva la
+   * MISMA semántica que el `usage` existente (reportado por el proveedor,
+   * con fallback de estimación local — ver `usageReported`).
+   */
+  usage: TokenUsage | null;
+  /**
+   * `true` únicamente cuando Google devolvió `usageMetadata` en la
+   * respuesta de ESTE intento. NO es una prueba de facturación confirmada —
+   * solo indica el origen del dato (`false` = estimación local o
+   * inexistente).
+   */
+  usageReported: boolean;
+  executedAt: Date;
+}
+
+/** Colector mutable por invocación lógica — mismo patrón que `attemptUsages`. */
+export interface GeminiAttemptTracker {
+  records: GeminiAttemptRecord[];
+  nextAttemptNumber: number;
+}
+
+/**
+ * P1.7.4-A — Error especializado de la integración Gemini para una
+ * invocación lógica que agotó sus intentos. Extiende `AppError` (mismo
+ * `message`/`statusCode`/`isOperational` que el error que reemplaza, por lo
+ * que todo `instanceof AppError` y todo manejador existente se comporta
+ * idéntico), añadiendo ÚNICAMENTE el detalle de intentos — así `AppError`
+ * genérico no se acopla a estructuras específicas de Gemini.
+ */
+export class GeminiInvocationError extends AppError {
+  public readonly attempts: GeminiAttemptRecord[];
+  /**
+   * Tiempo total real de la invocación lógica completa (incluidos todos los
+   * reintentos), medido desde el mismo `startTime` que ya usa el camino
+   * exitoso para `executionTimeMs` — NUNCA sustituye ni recalcula los
+   * `executedAt` individuales de cada intento, ni `retryAccounting`.
+   */
+  public readonly executionTimeMs: number;
+
+  constructor(message: string, statusCode: number, attempts: GeminiAttemptRecord[], executionTimeMs: number) {
+    super(message, statusCode);
+    this.name = 'GeminiInvocationError';
+    this.attempts = attempts;
+    this.executionTimeMs = executionTimeMs;
+    Object.setPrototypeOf(this, GeminiInvocationError.prototype);
+  }
+}
+
+/**
+ * Envuelve el error final de una invocación lógica fallida con su detalle de
+ * intentos. Si NO hubo ningún intento físico (p. ej. un bloqueo previo a la
+ * llamada), devuelve el error original sin envolver — cero llamadas físicas
+ * nunca producen una traza.
+ */
+function toGeminiInvocationError(error: unknown, attempts: GeminiAttemptRecord[], executionTimeMs: number): unknown {
+  if (attempts.length === 0) return error;
+  const statusCode = error instanceof AppError ? error.statusCode : 500;
+  const message = error instanceof Error ? error.message : String(error);
+  return new GeminiInvocationError(message, statusCode, attempts, executionTimeMs);
 }
 
 /**
@@ -468,7 +563,26 @@ export class GeminiClient {
     diagnostics: GeminiCallDiagnostics | undefined,
     attemptUsages: TokenUsage[],
     auditText: string,
+    attemptTracker?: GeminiAttemptTracker,
   ): Promise<{ data: TOutput; usage: TokenUsage }> {
+    // P1.7.4-A: identidad del intento físico, asignada al INICIO (antes de
+    // cualquier I/O) para que incluso un fallo de transporte quede
+    // registrado con su ordinal y timestamp reales. `recordAttempt` es un
+    // canal PARALELO — nunca toca `attemptUsages` ni el flujo existente.
+    const attemptNumber = attemptTracker ? attemptTracker.nextAttemptNumber++ : 0;
+    const attemptExecutedAt = new Date();
+    const recordAttempt = (
+      partial: Omit<GeminiAttemptRecord, 'attemptNumber' | 'modelRequested' | 'executedAt'>,
+    ): void => {
+      if (!attemptTracker) return;
+      attemptTracker.records.push({
+        attemptNumber,
+        modelRequested: env.GEMINI_MODEL,
+        executedAt: attemptExecutedAt,
+        ...partial,
+      });
+    };
+
     // ── TEMPORARY: [GeminiPayloadAudit] — real request size/composition,
     // logged right before every actual call to generateContent (including
     // each retry attempt). Metrics/counts/booleans only — never the
@@ -488,21 +602,56 @@ export class GeminiClient {
       `htmlTagLikeMatches=${composition.htmlTagLikeMatches} containsOuterHTML=${composition.containsOuterHTML} containsFullDOM=${composition.containsFullDOM}`,
     );
 
-    const response = await this.client.models.generateContent({
-      model: env.GEMINI_MODEL,
-      contents,
-      config: {
-        responseMimeType: 'application/json',
-      },
-    });
+    let response;
+    try {
+      response = await this.client.models.generateContent({
+        model: env.GEMINI_MODEL,
+        contents,
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+    } catch (providerError) {
+      // P1.7.4-A: PROVIDER_ERROR — no existe objeto de respuesta, por lo que
+      // nunca se inventa modelVersion ni usage. Solo se registra la razón ya
+      // clasificada; la decisión de reintento sigue siendo exclusiva de
+      // executeWithRetry, exactamente como antes.
+      recordAttempt({
+        outcome: 'PROVIDER_ERROR',
+        errorReason: classifyAiError(providerError).reason,
+        usage: null,
+        usageReported: false,
+      });
+      throw providerError;
+    }
+
+    // P1.7.4-A: modelVersion y usageMetadata se leen ANTES de validar el
+    // texto — son campos de nivel superior de GenerateContentResponse,
+    // independientes de candidates/text (genai.d.ts:4651/4658), y una
+    // respuesta vacía NO implica consumo cero: el prompt ya fue procesado y
+    // su costo puede venir reportado.
+    const modelVersionEffective: string | null = (response as any).modelVersion ?? null;
+    // Extract real usage metadata from API response if present, or estimate based on length
+    const usageMetadata = (response as any).usageMetadata;
 
     const rawText = response.text;
     if (!rawText) {
+      recordAttempt({
+        modelVersionEffective,
+        outcome: 'EMPTY_RESPONSE',
+        usage: usageMetadata
+          ? {
+              promptTokens: usageMetadata.promptTokenCount ?? 0,
+              outputTokens: usageMetadata.candidatesTokenCount ?? 0,
+              totalTokens:
+                usageMetadata.totalTokenCount ??
+                (usageMetadata.promptTokenCount ?? 0) + (usageMetadata.candidatesTokenCount ?? 0),
+            }
+          : null,
+        usageReported: !!usageMetadata,
+      });
       throw new InvalidAiResponseError('Gemini returned an empty response');
     }
-
-    // Extract real usage metadata from API response if present, or estimate based on length
-    const usageMetadata = (response as any).usageMetadata;
 
     // ── TEMPORARY: [GeminiPayloadAudit] — explicitly distinguishes actual
     // SDK-reported usageMetadata (when present) from the char-based
@@ -583,6 +732,7 @@ export class GeminiClient {
     try {
       parsed = JSON.parse(cleaned);
     } catch {
+      recordAttempt({ modelVersionEffective, outcome: 'INVALID_JSON', usage, usageReported: !!usageMetadata });
       throw new InvalidAiResponseError(`Gemini response is not valid JSON. Raw: ${cleaned.slice(0, 200)}`);
     }
 
@@ -629,11 +779,13 @@ export class GeminiClient {
         `phase=${diagnostics?.phase ?? 'unknown'} issueCount=${validated.error.issues.length} ` +
         `(mostrando hasta 10):\n${issueDetails.map((d) => `  - ${d}`).join('\n')}`,
       );
+      recordAttempt({ modelVersionEffective, outcome: 'SCHEMA_MISMATCH', usage, usageReported: !!usageMetadata });
       throw new InvalidAiResponseError(
         `Gemini response does not match expected contract: ${validated.error.message}`,
       );
     }
 
+    recordAttempt({ modelVersionEffective, outcome: 'SUCCESS', usage, usageReported: !!usageMetadata });
     return { data: validated.data, usage };
   }
 
@@ -654,6 +806,8 @@ export class GeminiClient {
     // later throws (JSON parse / schema validation failure) and gets
     // retried. See sumTokenUsages/GeminiStructuredResponse.retryAccounting.
     const attemptUsages: TokenUsage[] = [];
+    // P1.7.4-A: colector paralelo por intento físico (ver GeminiAttemptRecord).
+    const attemptTracker: GeminiAttemptTracker = { records: [], nextAttemptNumber: 1 };
 
     // The full "call Gemini → parse → validate" cycle runs inside
     // executeWithRetry as a single unit: an empty response, malformed JSON,
@@ -661,11 +815,20 @@ export class GeminiClient {
     // classifyAiError marks retryable — so a bad response triggers a fresh
     // Gemini call (up to the same maxRetries as network/5xx errors), instead
     // of being fatal for the whole iteration on the first bad reply.
-    const { data, usage } = await this.executeWithRetry(
-      () => this.executeAndValidate(prompt, schema, diagnostics, attemptUsages, prompt),
-      retryOpts,
-      { phase: diagnostics?.phase, model: env.GEMINI_MODEL },
-    );
+    let outcome: { data: TOutput; usage: TokenUsage };
+    try {
+      outcome = await this.executeWithRetry(
+        () => this.executeAndValidate(prompt, schema, diagnostics, attemptUsages, prompt, attemptTracker),
+        retryOpts,
+        { phase: diagnostics?.phase, model: env.GEMINI_MODEL },
+      );
+    } catch (error) {
+      // P1.7.4-A: la invocación lógica agotó sus intentos — el error final
+      // (mismo message/statusCode de siempre) viaja ahora con el detalle de
+      // intentos adjunto, para que el llamador pueda persistir la traza.
+      throw toGeminiInvocationError(error, attemptTracker.records, Date.now() - startTime);
+    }
+    const { data, usage } = outcome;
 
     const executionTimeMs = Date.now() - startTime;
 
@@ -685,6 +848,7 @@ export class GeminiClient {
       usage,
       executionTimeMs,
       ...(retryAccounting ? { retryAccounting } : {}),
+      attempts: attemptTracker.records,
     };
   }
 
@@ -713,6 +877,8 @@ export class GeminiClient {
   ): Promise<GeminiStructuredResponse<TOutput>> {
     const startTime = Date.now();
     const attemptUsages: TokenUsage[] = [];
+    // P1.7.4-A: mismo colector paralelo por intento físico que el camino texto.
+    const attemptTracker: GeminiAttemptTracker = { records: [], nextAttemptNumber: 1 };
     const contents: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
       { text: textPrompt },
       { inlineData: { mimeType: image.mimeType, data: image.data } },
@@ -723,11 +889,17 @@ export class GeminiClient {
       phase: diagnostics?.phase ?? 'prototype',
       imageBytesApprox: image.data.length,
     };
-    const { data, usage } = await this.executeWithRetry(
-      () => this.executeAndValidate(contents, schema, resolvedDiagnostics, attemptUsages, textPrompt),
-      retryOpts,
-      { phase: resolvedDiagnostics.phase, model: env.GEMINI_MODEL },
-    );
+    let outcome: { data: TOutput; usage: TokenUsage };
+    try {
+      outcome = await this.executeWithRetry(
+        () => this.executeAndValidate(contents, schema, resolvedDiagnostics, attemptUsages, textPrompt, attemptTracker),
+        retryOpts,
+        { phase: resolvedDiagnostics.phase, model: env.GEMINI_MODEL },
+      );
+    } catch (error) {
+      throw toGeminiInvocationError(error, attemptTracker.records, Date.now() - startTime);
+    }
+    const { data, usage } = outcome;
 
     const executionTimeMs = Date.now() - startTime;
     const retryAccounting = attemptUsages.length > 0
@@ -739,6 +911,7 @@ export class GeminiClient {
       usage,
       executionTimeMs,
       ...(retryAccounting ? { retryAccounting } : {}),
+      attempts: attemptTracker.records,
     };
   }
 

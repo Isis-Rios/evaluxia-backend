@@ -267,7 +267,7 @@ async function runEndToEndPersistenceTest(assert: (c: boolean, m: string) => voi
 
     assert(!!persistedN05 && persistedN05.status === 'NOT_EVALUABLE', '10. Extremo a extremo: el hallazgo N-05 (ausencia de validación) persiste como NOT_EVALUABLE, no FAIL');
     assert(!!persistedContrast && persistedContrast.status === 'FAIL', '11. El hallazgo de contraste legítimo persiste sin cambios como FAIL -- Regla D intacta');
-    assert(!persistedPass, '12. El hallazgo PASS sigue sin persistirse -- P1.5.2 no se rompió');
+    assert(!!persistedPass && persistedPass.status === 'PASS', '12. El hallazgo PASS (N-04) AHORA TAMBIÉN persiste con status PASS -- P1.7.2');
     assert(persistedN05?.recommendation == null, '13. El Finding NOT_EVALUABLE persistido conserva recommendation null/undefined (misma regla de siempre)');
   } finally {
     stub.restore();

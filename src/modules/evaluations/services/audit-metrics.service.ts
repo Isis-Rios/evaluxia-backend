@@ -360,10 +360,10 @@ export class AuditMetricsService {
    */
   public normalizeCriterionKey(criterion: string): string {
     if (!criterion) return 'unknown';
-    const wcagMatch = criterion.match(/WCAG\s+\d+\.\d+\.\d+/i);
-    if (wcagMatch) return wcagMatch[0].toUpperCase().trim();
     const nielsenMatch = criterion.match(/N-\d{2}/i);
     if (nielsenMatch) return nielsenMatch[0].toUpperCase().trim();
+    const wcagMatch = criterion.match(/(?<!\d\.)\b(?:WCAG\s+)?(\d+\.\d+\.\d+)(?!\.\d)\b/i);
+    if (wcagMatch) return `WCAG ${wcagMatch[1]}`;
     return criterion.toLowerCase().replace(/\s+/g, ' ').trim();
   }
 

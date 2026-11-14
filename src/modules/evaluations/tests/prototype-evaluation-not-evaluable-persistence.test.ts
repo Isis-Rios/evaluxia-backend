@@ -4,11 +4,15 @@ import { evaluationRepository } from '@/modules/evaluations/evaluation.repositor
 import { evaluatorProfileService } from '@/modules/evaluator-profiles/evaluator-profile.service';
 import { findingService } from '@/modules/findings/finding.service';
 import { reportRepository } from '@/modules/reports/report.repository';
+import { Report } from '@/modules/reports/report.model';
+import { aiService } from '@/modules/ai/ai.service';
+import { resolveApplicablePrototypeCriteria } from '@/modules/evaluations/services/prototype-criteria-resolver';
+import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.service';
 import { stubGeminiJsonResponses } from '@/shared/testing/gemini-mock-harness';
 import { buildValidPrototypeAuditOutputJson } from '@/shared/testing/prototype-gemini-mock-harness';
 
 /**
- * P1.5.2 (Opción B autorizada) — análogo de
+ * P1.5.2 (Opción B autorizada), actualizado en P1.7.2 — análogo de
  * `audit-engine-not-evaluable-persistence.test.ts` para el pipeline de
  * prototipos, usando el mismo mecanismo de mocks ya validado en
  * `prototype-evaluation-retry-override.test.ts` (camino REAL completo:
@@ -33,6 +37,15 @@ import { buildValidPrototypeAuditOutputJson } from '@/shared/testing/prototype-g
  * criteria.test.ts`). WCAG 1.4.1 (Uso del color) es DIRECTLY_EVALUABLE y
  * queda fuera del alcance de V5, por lo que el FAIL vuelve a persistir y a
  * contabilizarse exactamente como este archivo siempre pretendió probar.
+ *
+ * P1.7.2 — la política de persistencia cambió: PASS AHORA SÍ se persiste
+ * (motivo: sin el Finding individual, un criterio "silencioso" era
+ * indistinguible entre "Gemini lo marcó PASS y se descartó" y "nunca se
+ * evaluó", violando la regla metodológica de no inferir PASS por ausencia
+ * de Finding -- auditoría P1.7.1/P1.7.2). Este archivo se actualiza para
+ * reflejar el nuevo contrato en vez de eliminarse, porque sigue siendo la
+ * prueba de referencia para la política de persistencia completa
+ * (FAIL+NOT_EVALUABLE+PASS) de este pipeline.
  */
 
 const FAKE_EVALUATION_ID = 'fake-prototype-eval-id-p1-5-2';
@@ -115,6 +128,7 @@ function patchDependencies() {
     reportFindByEvaluationId: reportRepository.findByEvaluationId,
     reportCreate: reportRepository.create,
     readFileSync: fs.readFileSync,
+    logInvocation: aiInteractionService.logInvocation,
   };
 
   const createdFindings: any[] = [];
@@ -132,6 +146,8 @@ function patchDependencies() {
     capturedReportData = dto;
     return dto;
   };
+  // P1.7.4-A: la traza de invocación PROTOTYPE (éxito o fallo) se captura en memoria (sin MongoDB vivo en este sandbox).
+  (aiInteractionService as any).logInvocation = async (params: any) => params;
   (fs as any).readFileSync = ((path: string, ...rest: any[]) => {
     if (typeof path === 'string' && path.includes('fake-p1-5-2.png')) {
       return Buffer.from('fake-png-bytes');
@@ -150,6 +166,7 @@ function patchDependencies() {
       (reportRepository as any).findByEvaluationId = originals.reportFindByEvaluationId;
       (reportRepository as any).create = originals.reportCreate;
       (fs as any).readFileSync = originals.readFileSync;
+      (aiInteractionService as any).logInvocation = originals.logInvocation;
     },
   };
 }
@@ -179,7 +196,15 @@ async function runTests() {
 
     assert(!!persistedFail && persistedFail.status === 'FAIL', '1. El hallazgo FAIL (WCAG 1.4.1) persiste con status FAIL (comportamiento intacto)');
     assert(!!persistedNotEvaluable && persistedNotEvaluable.status === 'NOT_EVALUABLE', '2. El hallazgo NOT_EVALUABLE (WCAG 1.1.1) AHORA persiste con status NOT_EVALUABLE');
-    assert(!persistedPass, '3. El hallazgo PASS (N-04) NUNCA persiste (sin cambios respecto a antes de P1.5.2)');
+    assert(!!persistedPass && persistedPass.status === 'PASS', '3. El hallazgo PASS (N-04) AHORA SÍ persiste con status PASS (P1.7.2, corrige P1.5.2)');
+    assert(
+      persistedPass?.description === passFinding.description,
+      '3b. El Finding PASS persistido conserva la descripción original de Gemini',
+    );
+    assert(
+      Array.isArray(persistedPass?.evidence) && persistedPass.evidence.length === 1,
+      '3c. El Finding PASS persistido conserva su evidencia original intacta',
+    );
 
     assert(
       persistedNotEvaluable?.description === notEvaluableFinding.description,
@@ -210,6 +235,67 @@ async function runTests() {
     assert(reportData?.notEvaluableCount === 1, `5c. notEvaluableCount=1 (1 hallazgo crudo NOT_EVALUABLE), obtenido=${reportData?.notEvaluableCount}`);
     assert(reportData?.passCount === 1, `5d. passCount=1 (criterio N-04 PASS), obtenido=${reportData?.passCount}`);
     assert(reportData?.totalFindings === 3, `5e. totalFindings=3 (los 3 hallazgos crudos: FAIL+NOT_EVALUABLE+PASS), obtenido=${reportData?.totalFindings}`);
+
+    // 6. P1.7.2 -- sin duplicación introducida por el cambio: exactamente 1
+    // Finding persistido por hallazgo crudo (3 crudos -> 3 persistidos),
+    // nunca más de uno por criterio (los 3 criterios de este fixture son
+    // distintos entre sí, ver docstring).
+    assert(createdFindings.length === 3, `6a. Se persisten exactamente 3 Findings (uno por hallazgo crudo, sin duplicación), obtenido=${createdFindings.length}`);
+
+    // 7. P1.7.2 -- nuevos campos de política/modelo en el Report.
+    assert(reportData?.findingPersistencePolicy === 'PASS_PERSISTED', `7a. findingPersistencePolicy='PASS_PERSISTED', obtenido=${reportData?.findingPersistencePolicy}`);
+    assert(typeof reportData?.geminiModel === 'string' && reportData.geminiModel.length > 0, `7b. geminiModel se asigna como string no vacío, obtenido=${JSON.stringify(reportData?.geminiModel)}`);
+
+    // 8. P1-1 -- integridad de Report en PROTOTIPO y serialización de Mongoose:
+    // - conserva `report.coverage` completo;
+    // - NO inyecta artificialmente valores 0 o 20 en los campos exclusivos de WEB;
+    // - conserva todos los campos requeridos por el frontend (EvaluationSummary).
+    const serializedProtoReport = new Report(reportData).toJSON();
+    assert(
+      serializedProtoReport.coverage?.applicableCriteria === 13 &&
+        serializedProtoReport.coverage?.evaluatedCriteria === 2 &&
+        serializedProtoReport.coverage?.notEvaluableCriteria === 11 &&
+        serializedProtoReport.coverage?.outOfCoverageCriteria === 6,
+      '8a. P1-1 (PROTOTIPO): report.coverage se conserva íntegro tras serialización Mongoose (13 aplicables, 2 evaluados, 11 no evaluables, 6 fuera de cobertura)',
+    );
+    assert(
+      serializedProtoReport.auditCoverage === undefined &&
+        serializedProtoReport.nielsenCoverage === undefined &&
+        serializedProtoReport.wcagCoverage === undefined &&
+        serializedProtoReport.evaluatedCriteria === undefined &&
+        serializedProtoReport.totalCriteria === undefined,
+      '8b. P1-1 (PROTOTIPO): los campos de cobertura exclusivos de WEB quedan undefined (nunca se generan artificialmente con 0 o 20)',
+    );
+    assert(
+      typeof serializedProtoReport.overallScore === 'number' &&
+        serializedProtoReport.passCount === 1 &&
+        serializedProtoReport.failCount === 1 &&
+        serializedProtoReport.notEvaluableCount === 1 &&
+        serializedProtoReport.totalFindings === 3 &&
+        !!serializedProtoReport.metrics,
+      '8c. P1-1 (PROTOTIPO): la serialización conserva overallScore, passCount, failCount, notEvaluableCount, totalFindings y metrics requeridos por el frontend',
+    );
+
+    // 9. P1-2 y P0-1 -- verificación determinística del prompt de prototipo
+    // generado por buildPrototypeAuditPrompt (regla de paridad property/value y
+    // ejemplo explícito con prefijo "WCAG " en la plantilla JSON).
+    const capturedPrompt: string = (aiService as any).buildPrototypeAuditPrompt(
+      {
+        evaluationId: FAKE_EVALUATION_ID,
+        title: 'Prototipo de prueba (P1.5.2)',
+        description: 'Formulario de contacto ficticio para pruebas de persistencia NOT_EVALUABLE.',
+        archetype: fakeProfile(),
+      },
+      resolveApplicablePrototypeCriteria(),
+    );
+    assert(
+      capturedPrompt.includes('NEVER set a non-null') && capturedPrompt.includes('NEVER null when property is present'),
+      '9a. P1-2: buildPrototypeAuditPrompt incluye la regla explícita y el recordatorio en plantilla JSON de que property y value deben ser ambos cadenas no vacías o ambos null',
+    );
+    assert(
+      capturedPrompt.includes('e.g. WCAG 1.4.3 Contraste mínimo') && capturedPrompt.includes('e.g. visualLabel'),
+      '9b. P0-1/P1-2: la plantilla JSON de buildPrototypeAuditPrompt incluye ejemplos explícitos con prefijo "WCAG " y par property/value',
+    );
   } finally {
     stub.restore();
     deps.restore();

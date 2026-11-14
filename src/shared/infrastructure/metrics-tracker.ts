@@ -92,33 +92,43 @@ export interface EvaluationMetrics {
   outputTokens: number;
   totalTokens: number;
   estimatedCostUsd: number;
+  /**
+   * P2-2 — Contador acumulado en memoria durante el tiempo de vida del proceso
+   * backend (`MetricsTracker` singleton), NO por evaluación individual. Suma el
+   * costo de todas las evaluaciones ejecutadas desde el arranque del servidor y
+   * se reinicia a 0 al reiniciar el proceso. Para el costo de una evaluación
+   * específica debe utilizarse siempre `estimatedCostUsd`.
+   */
   cumulativeCostUsd: number;
   /** J3 — suma de thinkingTokens observados (Phase 1 + Phase 2), cuando el SDK los reportó. Puramente observacional. */
   thinkingTokens?: number;
   /**
-   * J3 — `estimatedCostUsd` (sin cambios) siempre representa el costo
-   * calculado SOLO con promptTokens/outputTokens a las tarifas ya
-   * configuradas (tarifa confirmada). `costStatus` indica si, además,
-   * hubo thinkingTokens observados cuya tarifa NO está verificada en este
-   * repositorio — en cuyo caso el costo real podría ser mayor al reportado.
+   * J3 / Ronda 2 — Estado de verificación de la tarifa aplicada en `estimatedCostUsd`:
+   * - `'confirmed'`: el modelo tiene tarifa oficial verificada en `VERIFIED_MODEL_PRICING`
+   *   y los `thinkingTokens` (cuando existen) están incluidos una sola vez a la tarifa
+   *   oficial de salida.
+   * - `'confirmed-excludes-unverified-thinking-cost'`: mantenido por compatibilidad con
+   *   reportes históricos anteriores a la verificación de tarifa de thinking tokens.
+   * - `'unverified-model-rate'`: el identificador del modelo no pertenece a la tabla de
+   *   tarifas verificadas; no se utiliza silenciosamente la tarifa de otro modelo (`0`)
+   *   ni se marca como `'confirmed'`.
    */
-  costStatus?: 'confirmed' | 'confirmed-excludes-unverified-thinking-cost';
+  costStatus?: 'confirmed' | 'confirmed-excludes-unverified-thinking-cost' | 'unverified-model-rate';
   /**
    * P1.1, Parte B (trazabilidad de contadores) — opcional, aditivo,
    * calculado por `AuditEngine` (no por `MetricsTracker`, que solo conoce
    * tokens/costo) y añadido a este objeto antes de persistirlo en
    * `Report.metrics`. Desglosa TODOS los hallazgos consolidados de Fase 2
-   * por `status`, incluyendo los que nunca se persisten como documento
-   * `Finding` (solo `FAIL` se persiste, ver `audit-engine.service.ts`).
-   * Esto es lo que permite explicar `infoCount`/`evidenceCount` del Report
-   * (que SÍ se calculan sobre el conjunto completo) a partir de un dato
-   * recuperable, sin guardar cada hallazgo PASS/NOT_EVALUABLE individual.
+   * por `status` (bajo la política vigente `PASS_PERSISTED` de P1.7.2, se
+   * persisten `FAIL`, `NOT_EVALUABLE` y `PASS`, ver `audit-engine.service.ts`).
+   * Esto permite explicar `infoCount`/`evidenceCount` del Report y verificar
+   * la integridad del conteo de persistencia en MongoDB.
    */
   metricsAudit?: {
     consolidatedByStatus: { FAIL: number; PASS: number; NOT_EVALUABLE: number };
     /**
-     * P1.6.2 Parte A — calculado a partir de `consolidatedByStatus`
-     * (FAIL + NOT_EVALUABLE, la política de persistencia actual), ANTES de
+     * P1.6.2 Parte A / P0-2 (actualizado a P1.7.2 `PASS_PERSISTED`) — calculado
+     * a partir de `consolidatedByStatus` (FAIL + NOT_EVALUABLE + PASS), ANTES de
      * tocar MongoDB. Es una expectativa, nunca una verificación directa de
      * la base de datos — ver `persistedFindingsCount` para el dato real.
      */
@@ -188,9 +198,10 @@ export function buildMetricsAudit(
       consolidatedByStatus[cf.status as keyof typeof consolidatedByStatus]++;
     }
   }
-  // Política actual (P1.5.2/Opción B): se persisten FAIL y NOT_EVALUABLE
-  // como documento `Finding`; PASS nunca se persiste.
-  const expectedPersistedFindingsCount = consolidatedByStatus.FAIL + consolidatedByStatus.NOT_EVALUABLE;
+  // Política actual (P1.7.2 / PASS_PERSISTED, alineado en P0-2): se persisten
+  // FAIL, NOT_EVALUABLE y PASS como documento `Finding`.
+  const expectedPersistedFindingsCount =
+    consolidatedByStatus.FAIL + consolidatedByStatus.NOT_EVALUABLE + consolidatedByStatus.PASS;
 
   const discrepancyNote =
     actualPersistedFindingsCount !== undefined && actualPersistedFindingsCount !== expectedPersistedFindingsCount
@@ -202,10 +213,10 @@ export function buildMetricsAudit(
     expectedPersistedFindingsCount,
     persistedFindingsCount: actualPersistedFindingsCount,
     note:
-      'Política de persistencia actual: se guardan como documento Finding los hallazgos consolidados con status FAIL o NOT_EVALUABLE; PASS nunca se persiste (ver audit-engine.service.ts paso 9). ' +
+      'Política de persistencia actual (PASS_PERSISTED, P1.7.2): se guardan como documento Finding los hallazgos consolidados con status FAIL, NOT_EVALUABLE o PASS (ver audit-engine.service.ts paso 9). ' +
       'expectedPersistedFindingsCount es un cálculo derivado de consolidatedByStatus, previo a tocar MongoDB. ' +
       'persistedFindingsCount, cuando está presente, es el conteo real de documentos creados en este ciclo. ' +
-      'infoCount y evidenceCount del Report se calculan sobre TODOS los hallazgos consolidados de Fase 2 (consolidatedByStatus), incluyendo los PASS que nunca se persisten individualmente.' +
+      'infoCount y evidenceCount del Report se calculan sobre TODOS los hallazgos consolidados de Fase 2 (consolidatedByStatus).' +
       discrepancyNote,
   };
 }
@@ -330,13 +341,97 @@ export function appendSummaryDisclaimer(
   return summary;
 }
 
+export interface VerifiedModelPricing {
+  canonicalModel: string;
+  pattern: RegExp;
+  /** USD per 1,000,000 input tokens (`promptTokenCount` / `promptTokens`). */
+  inputRatePerMillion: number;
+  /** USD per 1,000,000 output tokens (`candidatesTokenCount` + `thoughtsTokenCount`). */
+  outputRatePerMillion: number;
+  /**
+   * `true` cuando la documentación oficial de Gemini Developer API establece que
+   * los `thinkingTokens` (`thoughtsTokenCount`) se facturan a la tarifa de salida.
+   * En `@google/genai`, `candidatesTokenCount` (`outputTokens`) y `thoughtsTokenCount`
+   * (`thinkingTokens`) son campos disjuntos (`totalTokenCount = promptTokenCount +
+   * candidatesTokenCount + toolUsePromptTokenCount + thoughtsTokenCount`), por lo que
+   * sumar `outputTokens + thinkingTokens` los contabiliza exactamente una vez.
+   */
+  thinkingBilledAsOutput: boolean;
+  /** Fecha de verificación / vigencia de la tarifa registrada. */
+  effectiveDate: string;
+  /** Fecha límite de vigencia cuando existe un cambio programado por el proveedor. */
+  effectiveUntil?: string;
+  /** Unidad de facturación oficial. */
+  unit: 'USD per 1,000,000 tokens';
+}
+
+/**
+ * Tabla oficial de tarifas verificadas (Gemini Developer API — Standard Paid Tier).
+ *
+ * IMPORTANTE:
+ * - Cada patrón utiliza anclaje estricto para impedir que variantes distintas
+ *   (p. ej. `gemini-3.8-flash-lite`, `gemini-3.5-flash`, `gemini-2.5-flash-lite`)
+ *   coincidan silenciosamente con otro modelo.
+ * - `gemini-3.8-flash`: USD 0.75 / 1M tokens de entrada y USD 3.75 / 1M tokens de
+ *   salida (incluyendo thinking tokens). Tarifa introductoria oficial vigente hasta
+ *   el 31 de diciembre de 2026 (a partir del 1 de enero de 2027 pasa a USD 1.50 /
+ *   USD 7.50 por 1M tokens).
+ * - `gemini-3.5-flash-lite`: USD 0.30 / 1M tokens de entrada y USD 2.50 / 1M tokens
+ *   de salida (incluyendo thinking tokens), modalidad estándar.
+ * - `gemini-2.5-flash`: USD 0.30 / 1M tokens de entrada y USD 2.50 / 1M tokens de
+ *   salida (incluyendo thinking tokens), retiro programado 2026-12-01.
+ * - `gemini-2.0-flash`: USD 0.10 / 1M tokens de entrada y USD 0.40 / 1M tokens de
+ *   salida.
+ */
+export const VERIFIED_MODEL_PRICING: readonly VerifiedModelPricing[] = [
+  {
+    canonicalModel: 'gemini-3.8-flash',
+    pattern: /^gemini-3\.8-flash(?:-(?!lite\b)[a-z0-9._-]+)?$/i,
+    inputRatePerMillion: 0.75,
+    outputRatePerMillion: 3.75,
+    thinkingBilledAsOutput: true,
+    effectiveDate: '2026-11-12',
+    effectiveUntil: '2026-12-31',
+    unit: 'USD per 1,000,000 tokens',
+  },
+  {
+    canonicalModel: 'gemini-3.5-flash-lite',
+    pattern: /^gemini-3\.5-flash-lite(?:-[a-z0-9._-]+)?$/i,
+    inputRatePerMillion: 0.30,
+    outputRatePerMillion: 2.50,
+    thinkingBilledAsOutput: true,
+    effectiveDate: '2026-11-11',
+    unit: 'USD per 1,000,000 tokens',
+  },
+  {
+    canonicalModel: 'gemini-2.5-flash',
+    pattern: /^gemini-2\.5-flash(?:-(?!lite\b)[a-z0-9._-]+)?$/i,
+    inputRatePerMillion: 0.30,
+    outputRatePerMillion: 2.50,
+    thinkingBilledAsOutput: true,
+    effectiveDate: '2026-11-11',
+    effectiveUntil: '2026-12-01',
+    unit: 'USD per 1,000,000 tokens',
+  },
+  {
+    canonicalModel: 'gemini-2.0-flash',
+    pattern: /^gemini-2\.0-flash(?:-(?!lite\b)[a-z0-9._-]+)?$/i,
+    inputRatePerMillion: 0.10,
+    outputRatePerMillion: 0.40,
+    thinkingBilledAsOutput: true,
+    effectiveDate: '2026-11-11',
+    unit: 'USD per 1,000,000 tokens',
+  },
+];
+
+export function resolveVerifiedModelPricing(modelName: string): VerifiedModelPricing | null {
+  const normalized = (modelName || '').trim().replace(/^models\//i, '');
+  if (!normalized) return null;
+  return VERIFIED_MODEL_PRICING.find((entry) => entry.pattern.test(normalized)) ?? null;
+}
+
 /**
  * MetricsTracker — Singleton in-memory metric collector for LLM token consumption and costs.
- *
- * Pricing rates (USD per 1,000,000 tokens):
- * - gemini-2.5-flash: $0.30 input / $2.50 output
- * - gemini-2.0-flash: $0.10 input / $0.40 output
- * - default fallback: $0.30 input / $2.50 output
  */
 export class MetricsTracker {
   private static instance: MetricsTracker;
@@ -349,7 +444,6 @@ export class MetricsTracker {
   private cumulativePhase1Calls = 0;
   private cumulativePhase2Calls = 0;
   private cumulativeEvaluationsCount = 0;
-  /** J3 — aditivo: observacional únicamente, nunca incluido en cumulativeCostUsd (tarifa no verificada). */
   private cumulativeThinkingTokens = 0;
 
   private constructor() {}
@@ -362,24 +456,30 @@ export class MetricsTracker {
   }
 
   /**
-   * Calculates the estimated cost in USD based on model and token counts.
+   * Calculates the estimated cost in USD based on verified model pricing and token counts.
+   *
+   * - If `modelName` does not match an entry in `VERIFIED_MODEL_PRICING`, returns `0`
+   *   instead of silently applying another model's rate.
+   * - `thinkingTokens` (`thoughtsTokenCount`) are disjoint from `outputTokens`
+   *   (`candidatesTokenCount`) in `@google/genai` (`GenerateContentResponseUsageMetadata`),
+   *   and are billed once at `outputRatePerMillion` when `thinkingBilledAsOutput` is true.
    */
-  public calculateCost(modelName: string, promptTokens: number, outputTokens: number): number {
-    const model = modelName.toLowerCase();
-
-    let inputRatePerMillion = 0.30;
-    let outputRatePerMillion = 2.50;
-
-    if (model.includes('2.0-flash')) {
-      inputRatePerMillion = 0.10;
-      outputRatePerMillion = 0.40;
-    } else if (model.includes('2.5-flash')) {
-      inputRatePerMillion = 0.30;
-      outputRatePerMillion = 2.50;
+  public calculateCost(
+    modelName: string,
+    promptTokens: number,
+    outputTokens: number,
+    thinkingTokens = 0,
+  ): number {
+    const pricing = resolveVerifiedModelPricing(modelName);
+    if (!pricing) {
+      return 0;
     }
 
-    const inputCost = (promptTokens / 1_000_000) * inputRatePerMillion;
-    const outputCost = (outputTokens / 1_000_000) * outputRatePerMillion;
+    const safeThinkingTokens = typeof thinkingTokens === 'number' && thinkingTokens > 0 ? thinkingTokens : 0;
+    const billableOutputTokens = outputTokens + (pricing.thinkingBilledAsOutput ? safeThinkingTokens : 0);
+
+    const inputCost = (promptTokens / 1_000_000) * pricing.inputRatePerMillion;
+    const outputCost = (billableOutputTokens / 1_000_000) * pricing.outputRatePerMillion;
 
     return Number((inputCost + outputCost).toFixed(6));
   }
@@ -401,18 +501,25 @@ export class MetricsTracker {
     const modelUsed = params.modelUsed || env.GEMINI_MODEL;
     const promptTokens = params.promptTokens;
     const outputTokens = params.outputTokens;
+    const safeThinkingTokens =
+      typeof params.thinkingTokens === 'number' && params.thinkingTokens > 0 ? params.thinkingTokens : 0;
     // NOTA (J3): totalTokens sigue calculándose aquí como promptTokens+outputTokens,
     // EXACTAMENTE como antes — este comportamiento NO cambia (compatibilidad
     // hacia atrás). Es un valor distinto y deliberadamente separado del
     // `totalTokenCount` que Gemini reporta por llamada (que sí puede incluir
     // thinkingTokens) — ver gemini.client.ts/checkUsageConsistency para ese
     // contraste a nivel de llamada individual. Aquí, a nivel de evaluación
-    // completa, `thinkingTokens` se reporta aparte, nunca sumado en silencio.
+    // completa, `thinkingTokens` se reporta aparte en su propio campo, mientras
+    // que `calculateCost` lo contabiliza exactamente una vez a la tarifa de salida.
     const totalTokens = promptTokens + outputTokens;
 
-    const estimatedCostUsd = this.calculateCost(modelUsed, promptTokens, outputTokens);
-    const costStatus: EvaluationMetrics['costStatus'] =
-      params.thinkingTokens && params.thinkingTokens > 0 ? 'confirmed-excludes-unverified-thinking-cost' : 'confirmed';
+    const pricing = resolveVerifiedModelPricing(modelUsed);
+    const estimatedCostUsd = this.calculateCost(modelUsed, promptTokens, outputTokens, safeThinkingTokens);
+    const costStatus: EvaluationMetrics['costStatus'] = !pricing
+      ? 'unverified-model-rate'
+      : pricing.thinkingBilledAsOutput || safeThinkingTokens === 0
+        ? 'confirmed'
+        : 'confirmed-excludes-unverified-thinking-cost';
 
     // Update cumulative state
     this.cumulativeCostUsd = Number((this.cumulativeCostUsd + estimatedCostUsd).toFixed(6));
@@ -422,8 +529,8 @@ export class MetricsTracker {
     this.cumulativePhase1Calls += params.phase1Calls;
     this.cumulativePhase2Calls += params.phase2Calls;
     this.cumulativeEvaluationsCount += 1;
-    if (params.thinkingTokens) {
-      this.cumulativeThinkingTokens += params.thinkingTokens;
+    if (safeThinkingTokens > 0) {
+      this.cumulativeThinkingTokens += safeThinkingTokens;
     }
 
     const metrics: EvaluationMetrics = {
@@ -460,7 +567,6 @@ export class MetricsTracker {
       totalOutputTokens: this.cumulativeOutputTokens,
       totalTokens: this.cumulativeTotalTokens,
       cumulativeCostUsd: this.cumulativeCostUsd,
-      /** J3 — aditivo, observacional; no forma parte de cumulativeCostUsd. */
       totalThinkingTokens: this.cumulativeThinkingTokens,
     };
   }
@@ -479,10 +585,12 @@ export class MetricsTracker {
     console.log(`• Candidate Tokens (Output): ${metrics.outputTokens.toLocaleString()} tokens`);
     console.log(`• Total Tokens            : ${metrics.totalTokens.toLocaleString()} tokens`);
     if (metrics.thinkingTokens) {
-      console.log(`• Thinking Tokens (obs.)  : ${metrics.thinkingTokens.toLocaleString()} tokens (tarifa NO verificada, no incluida en el costo)`);
+      console.log(`• Thinking Tokens (output): ${metrics.thinkingTokens.toLocaleString()} tokens (facturados como salida)`);
     }
     console.log(`• Total Execution Time    : ${metrics.totalExecutionTimeMs} ms`);
-    console.log(`• Estimated Eval Cost     : $${metrics.estimatedCostUsd.toFixed(6)} USD${metrics.costStatus === 'confirmed-excludes-unverified-thinking-cost' ? ' (excluye costo de thinking, no verificado)' : ''}`);
+    console.log(
+      `• Estimated Eval Cost     : $${metrics.estimatedCostUsd.toFixed(6)} USD (${metrics.costStatus ?? 'confirmed'})`,
+    );
     console.log(`• CUMULATIVE BACKEND COST : $${metrics.cumulativeCostUsd.toFixed(6)} USD (since startup)`);
     console.log(`================================================================================\n`);
   }

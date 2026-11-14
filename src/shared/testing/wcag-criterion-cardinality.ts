@@ -24,10 +24,10 @@
  * (never rewrites/splits/picks-a-winner) — see its own docstring.
  */
 
-/** Counts how many distinct "WCAG X.Y.Z" code occurrences appear in a string. */
+/** Counts how many distinct WCAG X.Y.Z code occurrences (with or without the "WCAG " prefix) appear in a string. */
 export function countWcagCodesInCriterion(criterion: string | null | undefined): number {
   if (!criterion) return 0;
-  const matches = criterion.match(/WCAG\s+\d+\.\d+\.\d+/gi);
+  const matches = criterion.match(/(?<!\d\.)\b(?:WCAG\s+)?\d+\.\d+\.\d+(?!\.\d)\b/gi);
   return matches ? matches.length : 0;
 }
 

@@ -30,7 +30,7 @@ services:
       PORT: 3000
       MONGODB_URI: mongodb://mongo:27017/evaluxia
       GEMINI_API_KEY: ${GEMINI_API_KEY}
-      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
     volumes:
       # Mount source for hot-reload with ts-node-dev

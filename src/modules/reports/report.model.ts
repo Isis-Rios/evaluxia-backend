@@ -11,6 +11,14 @@ export interface IReport extends Document {
   status: ReportStatus;
   filePath?: string;
   summary?: string;
+  /**
+   * P2-1 — Semántica diferenciada por flujo:
+   * - En WEB (`AuditMetricsService`): cuenta únicamente los hallazgos consolidados
+   *   con `status: 'FAIL'` (coincide con `criticalCount + highCount + mediumCount + lowCount`).
+   * - En PROTOTIPO (`PrototypeMetricsService`): cuenta TODOS los hallazgos generados
+   *   (`findings.length`, incluyendo `PASS`, `FAIL` y `NOT_EVALUABLE`).
+   * No deben compararse entre ambos flujos como medidas equivalentes.
+   */
   totalFindings: number;
   criticalCount: number;
   highCount: number;
@@ -20,6 +28,15 @@ export interface IReport extends Document {
   passCount?: number;
   failCount?: number;
   notEvaluableCount?: number;
+  /**
+   * P1-1 — Los siguientes 7 campos (`nielsenCompliance`, `wcagCompliance`,
+   * `auditCoverage`, `nielsenCoverage`, `wcagCoverage`, `evaluatedCriteria`,
+   * `totalCriteria`) son exclusivos del flujo WEB (`AuditEngineService`,
+   * espacio fijo de 20 criterios). En evaluaciones de PROTOTIPO no se
+   * calculan ni se pueblan (quedan `undefined`), utilizándose en su lugar
+   * el subdocumento `coverage` (`applicableCriteria: 13`, `evaluatedCriteria`,
+   * `notEvaluableCriteria`, `outOfCoverageCriteria: 6`).
+   */
   nielsenCompliance?: number | null;
   wcagCompliance?: number | null;
   auditCoverage?: number;
@@ -31,6 +48,12 @@ export interface IReport extends Document {
   screenshotsCount?: number;
   iterationsEvaluated?: number;
   overallScore?: number | null;
+  /**
+   * P2-2 — Telemetría de consumo de IA. Para el costo de una evaluación
+   * individual debe consultarse `metrics.estimatedCostUsd`;
+   * `metrics.cumulativeCostUsd` es un acumulador en memoria por tiempo de
+   * vida del proceso backend, no por evaluación.
+   */
   metrics?: EvaluationMetrics;
   /**
    * Prototype visual evaluation (K.2.1 §5) — metadata de cobertura.
@@ -46,6 +69,27 @@ export interface IReport extends Document {
     notEvaluableCriteria: number;
     outOfCoverageCriteria: number;
   };
+  /**
+   * P1.7.2 — qué política de persistencia de Findings estaba vigente
+   * cuando se generó este Report. `'PASS_PERSISTED'` indica que un
+   * criterio sin Finding en absoluto (para esta evaluación) puede
+   * interpretarse con confianza como silencio real de Gemini (no como un
+   * PASS descartado). `'PASS_DISCARDED'` es el comportamiento anterior
+   * (Findings PASS nunca se persistían). Ausente (`undefined`) en todo
+   * Report generado antes de este campo existir -- esa ausencia ES la
+   * señal de "histórico, política desconocida", nunca se infiere ni se
+   * retrocompleta.
+   */
+  findingPersistencePolicy?: 'PASS_PERSISTED' | 'PASS_DISCARDED';
+  /**
+   * P1.7.2 — `env.GEMINI_MODEL` efectivo en el momento de generar este
+   * Report (único punto real de la llamada al cliente, ver
+   * `gemini.client.ts`). Opcional y aditivo: ausente en todo Report
+   * anterior a este campo -- esa ausencia nunca debe interpretarse como
+   * "modelo por defecto", el valor real de esas ejecuciones es
+   * irrecuperable.
+   */
+  geminiModel?: string;
   generatedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -70,11 +114,11 @@ const ReportSchema = new Schema<IReport>(
     notEvaluableCount: { type: Number, default: 0 },
     nielsenCompliance: { type: Number, default: null },
     wcagCompliance: { type: Number, default: null },
-    auditCoverage: { type: Number, default: 0 },
-    nielsenCoverage: { type: Number, default: 0 },
-    wcagCoverage: { type: Number, default: 0 },
-    evaluatedCriteria: { type: Number, default: 0 },
-    totalCriteria: { type: Number, default: 20 },
+    auditCoverage: { type: Number },
+    nielsenCoverage: { type: Number },
+    wcagCoverage: { type: Number },
+    evaluatedCriteria: { type: Number },
+    totalCriteria: { type: Number },
     evidenceCount: { type: Number, default: 0 },
     screenshotsCount: { type: Number, default: 0 },
     iterationsEvaluated: { type: Number, default: 1 },
@@ -86,6 +130,8 @@ const ReportSchema = new Schema<IReport>(
       notEvaluableCriteria: { type: Number },
       outOfCoverageCriteria: { type: Number },
     },
+    findingPersistencePolicy: { type: String, enum: ['PASS_PERSISTED', 'PASS_DISCARDED'] },
+    geminiModel: { type: String },
     generatedAt: { type: Date },
   },
   {

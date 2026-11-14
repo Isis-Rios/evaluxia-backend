@@ -25,8 +25,13 @@ function runTests() {
   }
 
   console.log('--- normalizeCriterionKey ---');
-  assert(normalizeCriterionKey('WCAG 1.4.3 Contraste (Mínimo)') === 'WCAG 1.4.3', 'Extrae el código canónico WCAG de un string largo');
+  assert(normalizeCriterionKey('WCAG 1.4.3 Contraste (Mínimo)') === 'WCAG 1.4.3', 'Extrae el código canónico WCAG de un string largo (con prefijo)');
+  assert(normalizeCriterionKey('1.4.3 Contraste mínimo') === 'WCAG 1.4.3', 'P0-1: Extrae el código canónico WCAG cuando falta el prefijo literal "WCAG "');
+  assert(normalizeCriterionKey('1.1.1 Contenido no textual') === 'WCAG 1.1.1', 'P0-1: Normaliza "1.1.1 ..." a "WCAG 1.1.1"');
+  assert(normalizeCriterionKey('9.9.9 Criterio desconocido') === 'WCAG 9.9.9', 'P0-1: Normaliza formato numérico desconocido a "WCAG 9.9.9" (el filtrado contra catálogo ocurre en métricas)');
+  assert(normalizeCriterionKey('1.4.3.1 Subcriterio de 4 segmentos') === '1.4.3.1 subcriterio de 4 segmentos', 'P0-1: No confunde una versión de 4 segmentos (1.4.3.1) con un código WCAG de 3 segmentos');
   assert(normalizeCriterionKey('N-01 Visibilidad del estado del sistema') === 'N-01', 'Extrae el código canónico Nielsen de un string largo');
+  assert(normalizeCriterionKey('N-04 Consistencia y estándares (ref 1.4.3)') === 'N-04', 'P0-1: Conserva prioridad de identificación de criterios Nielsen frente a números en la descripción');
   assert(normalizeCriterionKey(undefined) === 'unknown', 'undefined -> "unknown"');
 
   console.log('\n--- EXACT: coincide ---');

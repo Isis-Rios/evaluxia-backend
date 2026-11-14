@@ -103,6 +103,35 @@ function runWcagCardinalityTests() {
   }
   console.log('✅ Test 8: Nielsen-only finding (no wcagCriterion) correctly not applicable, untouched.');
 
+  // Test 9 (P0-1): Single WCAG code without "WCAG " prefix must count as 1 and NOT violate cardinality.
+  const singlePrefixless = '1.4.3 Contraste mínimo';
+  if (countWcagCodesInCriterion(singlePrefixless) !== 1 || violatesWcagCardinality(singlePrefixless)) {
+    console.error(`❌ Test 9 Failed: single prefix-less WCAG code should have count=1, got ${countWcagCodesInCriterion(singlePrefixless)}`);
+    process.exit(1);
+  }
+  console.log('✅ Test 9 (P0-1): single WCAG code without "WCAG " prefix correctly counted as 1 (no violation).');
+
+  // Test 10 (P0-1): Two WCAG codes in a single finding (with or without repeating "WCAG ") must be flagged and degraded.
+  const combinedMixedPrefix = 'WCAG 1.3.1 Información y relaciones y 3.3.2 Etiquetas o instrucciones';
+  const combinedNoPrefix = '1.3.1 Información y relaciones, 3.3.2 Etiquetas o instrucciones';
+  if (
+    countWcagCodesInCriterion(combinedMixedPrefix) !== 2 ||
+    !violatesWcagCardinality(combinedMixedPrefix) ||
+    countWcagCodesInCriterion(combinedNoPrefix) !== 2 ||
+    !violatesWcagCardinality(combinedNoPrefix)
+  ) {
+    console.error('❌ Test 10 Failed: two WCAG codes without repeated prefix must be detected as cardinality violation.');
+    process.exit(1);
+  }
+  const { findings: r10, summary: s10 } = applyCardinalityEnforcement([
+    { wcagCriterion: combinedNoPrefix, status: 'FAIL', confidence: 'high', recommendation: 'fix it' },
+  ]);
+  if (r10[0].status !== 'NOT_EVALUABLE' || r10[0].confidence !== 'low' || r10[0].recommendation !== null || s10.violations !== 1) {
+    console.error('❌ Test 10b Failed: combined prefix-less WCAG finding must be degraded by applyCardinalityEnforcement.', r10, s10);
+    process.exit(1);
+  }
+  console.log('✅ Test 10 (P0-1): two WCAG codes in the same finding (with or without prefix) detected (count=2) and degraded to NOT_EVALUABLE.');
+
   console.log('\n🎉 ALL H-REGRESSION-2 + J6 cardinality tests passed. Utility ready to grade a real Gemini response AND enforce the contract in production.');
   process.exit(0);
 }

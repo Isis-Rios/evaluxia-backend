@@ -1,6 +1,11 @@
 import { aiService } from '@/modules/ai/ai.service';
 import { EvidenceInput } from '@/modules/evaluations/services/evidence-deduplication.service';
-import { metricsTracker, checkUsageConsistency, TokenUsage } from '@/shared/infrastructure/metrics-tracker';
+import {
+  metricsTracker,
+  checkUsageConsistency,
+  resolveVerifiedModelPricing,
+  TokenUsage,
+} from '@/shared/infrastructure/metrics-tracker';
 import { stubGeminiResponsesWithUsage, buildValidAuditOutputJson } from '@/shared/testing/gemini-mock-harness';
 
 /**
@@ -135,26 +140,57 @@ async function main() {
     assert(consistencyMissing.evaluable === false, 'Caso 5c: si faltan campos CORE (outputTokens/totalTokens), NO se marca automáticamente inconsistencia -- evaluable=false');
   }
 
-  // --- Caso 6: cost calculation -- no inventa tarifas, no duplica tokens, no cuenta totalTokenCount como input+output ---
+  // --- Caso 6: cost calculation -- tarifas oficiales verificadas, thinkingTokens incluidos una sola vez como salida, bloqueo de modelos no verificados ---
   {
-    const cost = metricsTracker.calculateCost('gemini-2.5-flash', 1_000_000, 1_000_000);
-    assert(Math.abs(cost - 2.80) < 0.0001, `Caso 6: calculateCost(1M prompt, 1M output) = $2.80 exactos, tarifa confirmada sin cambios (obtenido: $${cost})`);
+    const cost25 = metricsTracker.calculateCost('gemini-2.5-flash', 1_000_000, 1_000_000);
+    assert(Math.abs(cost25 - 2.80) < 0.0001, `Caso 6a: calculateCost('gemini-2.5-flash', 1M prompt, 1M output) = $2.80 exactos ($0.30 + $2.50, obtenido: $${cost25})`);
+
+    const cost35Lite = metricsTracker.calculateCost('gemini-3.5-flash-lite', 1_000_000, 1_000_000);
+    assert(Math.abs(cost35Lite - 2.80) < 0.0001, `Caso 6b: calculateCost('gemini-3.5-flash-lite', 1M prompt, 1M output) = $2.80 exactos ($0.30 + $2.50, obtenido: $${cost35Lite})`);
+
+    const pricing38 = resolveVerifiedModelPricing('gemini-3.8-flash');
+    assert(pricing38 !== null && pricing38.inputRatePerMillion === 0.75 && pricing38.outputRatePerMillion === 3.75 && pricing38.thinkingBilledAsOutput === true && pricing38.effectiveUntil === '2026-12-31', 'Caso 6c: gemini-3.8-flash registra tarifa oficial verificada ($0.75 input / $3.75 output por 1M, vigencia hasta 2026-12-31, thinking facturado como salida)');
+
+    const cost38NoThinking = metricsTracker.calculateCost('gemini-3.8-flash', 1_000_000, 1_000_000, 0);
+    assert(Math.abs(cost38NoThinking - 4.50) < 0.0001, `Caso 6d: calculateCost('gemini-3.8-flash', 1M prompt, 1M output, 0 thinking) = $4.50 exactos ($0.75 + $3.75, obtenido: $${cost38NoThinking})`);
+
+    const cost38WithThinking = metricsTracker.calculateCost('gemini-3.8-flash', 1_000_000, 1_000_000, 1_000_000);
+    assert(Math.abs(cost38WithThinking - 8.25) < 0.0001, `Caso 6e: calculateCost('gemini-3.8-flash', 1M prompt, 1M output, 1M thinking) = $8.25 exactos ($0.75 + 2M * $3.75): thinkingTokens ni excluidos ni duplicados (obtenido: $${cost38WithThinking})`);
 
     const metricsNoThinking = metricsTracker.recordEvaluation({
-      evaluationId: 'j3-cost-no-thinking', phase1Calls: 0, phase2Calls: 1, totalExecutionTimeMs: 100,
+      evaluationId: 'j3-cost-no-thinking', modelUsed: 'gemini-3.8-flash', phase1Calls: 0, phase2Calls: 1, totalExecutionTimeMs: 100,
       promptTokens: 1000, outputTokens: 500,
     });
-    assert(metricsNoThinking.totalTokens === 1500, `Caso 6: totalTokens = promptTokens+outputTokens (1500), NUNCA usa totalTokenCount de Gemini como sustituto (obtenido: ${metricsNoThinking.totalTokens})`);
-    assert(metricsNoThinking.costStatus === 'confirmed', `Caso 6: sin thinkingTokens, costStatus='confirmed' (obtenido: ${metricsNoThinking.costStatus})`);
-    assert(metricsNoThinking.thinkingTokens === undefined, 'Caso 6: thinkingTokens no aparece cuando no se proveyó');
+    assert(metricsNoThinking.totalTokens === 1500, `Caso 6f: totalTokens = promptTokens+outputTokens (1500), NUNCA usa totalTokenCount de Gemini como sustituto (obtenido: ${metricsNoThinking.totalTokens})`);
+    assert(metricsNoThinking.costStatus === 'confirmed', `Caso 6f: sin thinkingTokens en modelo verificado, costStatus='confirmed' (obtenido: ${metricsNoThinking.costStatus})`);
+    assert(metricsNoThinking.thinkingTokens === undefined, 'Caso 6f: thinkingTokens no aparece cuando no se proveyó');
+    // 1000 * 0.75 / 1M = 0.00075; 500 * 3.75 / 1M = 0.001875 -> 0.002625
+    assert(Math.abs(metricsNoThinking.estimatedCostUsd - 0.002625) < 0.000001, `Caso 6f: costo sin thinking = $0.002625 (obtenido: $${metricsNoThinking.estimatedCostUsd})`);
 
     const metricsWithThinking = metricsTracker.recordEvaluation({
-      evaluationId: 'j3-cost-with-thinking', phase1Calls: 0, phase2Calls: 1, totalExecutionTimeMs: 100,
+      evaluationId: 'j3-cost-with-thinking', modelUsed: 'gemini-3.8-flash', phase1Calls: 0, phase2Calls: 1, totalExecutionTimeMs: 100,
       promptTokens: 1000, outputTokens: 500, thinkingTokens: 3000,
     });
-    assert(metricsWithThinking.estimatedCostUsd === metricsNoThinking.estimatedCostUsd, 'Caso 6: estimatedCostUsd es IDÉNTICO con o sin thinkingTokens -- el costo confirmado nunca incluye una tarifa de thinking no verificada');
-    assert(metricsWithThinking.costStatus === 'confirmed-excludes-unverified-thinking-cost', `Caso 6: con thinkingTokens>0, costStatus señala explícitamente que excluye una tarifa no verificada (obtenido: ${metricsWithThinking.costStatus})`);
-    assert(metricsWithThinking.thinkingTokens === 3000, 'Caso 6: thinkingTokens se reporta aparte, nunca sumado en silencio al costo');
+    // 1000 * 0.75 / 1M = 0.00075; (500 + 3000) * 3.75 / 1M = 0.013125 -> 0.013875
+    assert(Math.abs(metricsWithThinking.estimatedCostUsd - 0.013875) < 0.000001, `Caso 6g: con thinkingTokens=3000 en gemini-3.8-flash, se factura (500+3000)*$3.75/1M + 1000*$0.75/1M = $0.013875 (ni excluidos ni duplicados, obtenido: $${metricsWithThinking.estimatedCostUsd})`);
+    assert(metricsWithThinking.costStatus === 'confirmed', `Caso 6g: con tarifa oficial de thinking verificada, costStatus='confirmed' (obtenido: ${metricsWithThinking.costStatus})`);
+    assert(metricsWithThinking.thinkingTokens === 3000, 'Caso 6g: thinkingTokens=3000 se preserva en su campo propio');
+
+    // Protección contra uso silencioso de tarifas de otro modelo en variantes no verificadas:
+    for (const unverifiedModel of ['gemini-3.8-flash-lite', 'gemini-3.5-flash', 'gemini-2.5-flash-lite', 'unknown-model']) {
+      const unverifiedCost = metricsTracker.calculateCost(unverifiedModel, 1_000_000, 1_000_000, 500_000);
+      const unverifiedMetrics = metricsTracker.recordEvaluation({
+        evaluationId: `j3-unverified-${unverifiedModel}`,
+        modelUsed: unverifiedModel,
+        phase1Calls: 0,
+        phase2Calls: 1,
+        totalExecutionTimeMs: 50,
+        promptTokens: 10_000,
+        outputTokens: 1_000,
+      });
+      assert(unverifiedCost === 0, `Caso 6h (${unverifiedModel}): modelo no verificado NO toma silenciosamente la tarifa de otro modelo (cost=${unverifiedCost})`);
+      assert(unverifiedMetrics.costStatus === 'unverified-model-rate', `Caso 6h (${unverifiedModel}): modelo no verificado NUNCA se marca como 'confirmed' (costStatus=${unverifiedMetrics.costStatus})`);
+    }
   }
 
   // --- Caso 7: compatibilidad hacia atrás -- consumidores que solo esperan promptTokens/outputTokens/totalTokens siguen funcionando ---

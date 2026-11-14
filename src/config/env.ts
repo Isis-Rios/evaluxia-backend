@@ -23,7 +23,12 @@ const envSchema = z.object({
 
   // Gemini AI (optional in this iteration)
   GEMINI_API_KEY: z.string().optional(),
-  GEMINI_MODEL: z.string().default('gemini-2.5-flash'),
+  // P1.7.4-B / Ronda 2 — modelo por defecto bajo validación comparativa (ver
+  // docs/experimental/model-comparison/gemini-model-comparison.md).
+  // `gemini-3.5-flash-lite` y `gemini-2.5-flash` siguen disponibles
+  // estableciendo GEMINI_MODEL en el entorno — este valor es el fallback
+  // cuando la variable no se define.
+  GEMINI_MODEL: z.string().default('gemini-3.8-flash'),
 
   // CORS
   CORS_ORIGIN: z.string().default('*'),

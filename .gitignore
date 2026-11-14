@@ -31,3 +31,7 @@ test-results/
 
 # Uploads & screenshots
 uploads/
+
+# P1.7.2 — salida de la herramienta de extracción metodológica (datos de
+# evaluaciones reales/de la muestra, no debe versionarse)
+methodology-exports/

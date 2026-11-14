@@ -1,6 +1,5 @@
 /**
- * Fase D — Automation-Signal vs. DOM-Observation taxonomy (testing-only
- * module, not wired into production EvidenceGate/contracts).
+ * Fase D — Automation-Signal vs. DOM-Observation taxonomy.
  *
  * Formalizes the distinction identified during the Fase 2.2.1 design and
  * the Fase 2.2 audit (the real incident: a Playwright click timeout on an
@@ -12,10 +11,20 @@
  *   WCAG/Nielsen FAIL verdict — only a real, observable DOM/ARIA/style fact
  *   can.
  *
- * This is deliberately NOT wired into EvidenceGate/ai.contracts.ts yet —
- * that would be a production contract change (Fase 2.2.3, still pending
- * approval). Here it exists so Fase D can PROVE the rule against real
- * captured data before that production change is ever proposed.
+ * P1.7.3.1 — ya NO es exclusivamente de pruebas: `canJustifyFail`,
+ * `classifyDomFact` y `recommendedStatusForEvidence` se reutilizan desde
+ * `evidence-gate.service.ts` (producción) para proteger hallazgos FAIL de
+ * sitios web cuyo único sustento real sea una señal de automatización.
+ * `classifyActionFailure` sigue usándose solo en pruebas, porque el Evidence
+ * Gate no recibe el objeto `{success, error}` real de `executeAction` (ver
+ * `evidence-gate.service.ts`, sección "Automation Signal Protection") --
+ * ahí se construye la clasificación a partir del texto de `description` del
+ * propio finding, no de ese objeto. Permanece en `src/shared/testing/` por
+ * ser el camino de menor impacto (evita modificar las importaciones de los
+ * 4 archivos de prueba de Fase D/E que ya dependen de esta ruta); se deja
+ * documentado como una inconsistencia de ubicación conocida y aceptada, no
+ * resuelta en esta fase (ver informe P1.7.3.1, sección "problema de
+ * ubicación").
  */
 
 export type EvidenceOrigin = 'automation-signal' | 'dom-observation';
