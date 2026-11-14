@@ -2,7 +2,7 @@ import { findingService } from '@/modules/findings/finding.service';
 import { reportRepository } from '@/modules/reports/report.repository';
 import { evaluationRepository } from '../evaluation.repository';
 import { evaluatorProfileService } from '@/modules/evaluator-profiles/evaluator-profile.service';
-import { aiInteractionService } from '@/modules/ai-interactions/ai-interaction.service';
+import { aiInteractionService, isPhase1IterationRecord } from '@/modules/ai-interactions/ai-interaction.service';
 import { aiService } from '@/modules/ai/ai.service';
 import { metricsTracker, buildMetricsAudit, buildExplorationIntegrity, appendSummaryDisclaimer } from '@/shared/infrastructure/metrics-tracker';
 import { AUDIT_STATUS } from '@/config/constants';
@@ -15,6 +15,8 @@ import { buildEvidenceIndex } from './evidence-traceability.service';
 import { prioritizeComputedStyles, collectOtherEvidenceSelectors, collectIndependentFindingSelectors } from './evidence-prioritization.service';
 import { applyClaimConsistency } from './evidence-claim-consistency.service';
 import { applyCardinalityEnforcement } from '@/shared/testing/wcag-criterion-cardinality';
+import { buildVerifiedResultsSection, composeVerifiedSummary } from './verified-summary-builder';
+import { env } from '@/config/env';
 
 /**
  * P1.2 — forma mínima de `IEvaluation.flowState` que esta función realmente
@@ -212,6 +214,12 @@ export class AuditEngine {
       const evidenceIndex = buildEvidenceIndex({ evidencesSummary, dedupedLandmarks, dedupedLinks, dedupedButtons, dedupedComputedStyles });
 
       const interactions = await aiInteractionService.getInteractions(evaluationId);
+      // P1.7.4-A: el fallback de snapshotsCount solo debe contar los
+      // registros de iteración de Phase 1 (históricos sin `phase`
+      // incluidos). Las nuevas invocaciones de PHASE_2 y las invocaciones
+      // fallidas no existían cuando este fallback se definió y no deben
+      // alterar su valor (ver isPhase1IterationRecord).
+      const phase1IterationInteractions = interactions.filter(isPhase1IterationRecord);
       const completedSteps = evaluationDoc?.flowState?.completedSteps || [];
       const previousActions = evaluationDoc?.flowState?.previousActions || [];
 
@@ -227,22 +235,58 @@ export class AuditEngine {
 
       // 5. Invocar el prompt de auditoría de Fase 2 en AiService enviando el paquete de evidencias
       console.log(`[AuditEngine] 🤖 Invoking Phase 2 specialized evidence-based audit prompt with Gemini...`);
-      const auditResult = await aiService.performAuditAnalysis({
-        evaluationId,
-        title: title || evaluationDoc?.title || 'Evaluación Web',
-        url: evaluationDoc?.url || 'https://ejemplo.com',
-        archetype: profileData,
-        completedSteps,
-        previousActions,
-        snapshotsCount: evidences.length || interactions.length || 1,
-        evidencesSummary,
-        dedupedLandmarks,
-        dedupedLinks,
-        dedupedButtons,
-        dedupedComputedStyles,
-        accessibilityTrees: evidences.map((e) => e.accessibilityTree).filter(Boolean) as string[],
-        explorationNote,
-      });
+      let auditResult: Awaited<ReturnType<typeof aiService.performAuditAnalysis>>;
+      try {
+        auditResult = await aiService.performAuditAnalysis({
+          evaluationId,
+          title: title || evaluationDoc?.title || 'Evaluación Web',
+          url: evaluationDoc?.url || 'https://ejemplo.com',
+          archetype: profileData,
+          completedSteps,
+          previousActions,
+          snapshotsCount: evidences.length || phase1IterationInteractions.length || 1,
+          evidencesSummary,
+          dedupedLandmarks,
+          dedupedLinks,
+          dedupedButtons,
+          dedupedComputedStyles,
+          accessibilityTrees: evidences.map((e) => e.accessibilityTree).filter(Boolean) as string[],
+          explorationNote,
+        });
+      } catch (phase2Error) {
+        // P1.7.4-A: persistir el detalle de intentos físicos facturados antes
+        // de propagar al catch exterior (que marca auditStatus=FAILED igual
+        // que siempre). Sin intentos adjuntos, no se registra nada.
+        await aiInteractionService.logFailedInvocationFromError(evaluationId, 'PHASE_2', undefined, phase2Error);
+        throw phase2Error;
+      }
+
+      // P1.7.4-A: traza de la invocación PHASE_2 exitosa. El retorno
+      // temprano por bloqueo J2-CRITICAL no trae attempts (cero llamadas
+      // físicas) y por tanto no registra nada. Un fallo de esta escritura
+      // de traza nunca debe hacer fallar una auditoría ya exitosa.
+      if (auditResult.attempts && auditResult.attempts.length > 0) {
+        try {
+          await aiInteractionService.logInvocation({
+            evaluationId,
+            phase: 'PHASE_2',
+            executionTimeMs: auditResult.executionTimeMs,
+            requestTokens: auditResult.usage.promptTokens,
+            responseTokens: auditResult.usage.outputTokens,
+            invocationOutcome: 'SUCCESS',
+            attempts: auditResult.attempts,
+          });
+        } catch (traceError) {
+          // P1.7.4-A (punto 2): nunca silencioso, con el mismo contexto
+          // mínimo (evaluationId/phase/resultado) que el camino de fallo;
+          // sin reintentar la escritura; no afecta a la auditoría, que ya
+          // concluyó con éxito.
+          console.error(
+            `[AuditEngine] ❌ Fallo al persistir AiInteraction (evaluationId=${evaluationId}, phase=PHASE_2, invocationOutcome=SUCCESS) — la traza de esta invocación se pierde; la auditoría continúa sin cambios:`,
+            traceError,
+          );
+        }
+      }
 
       const { executiveSummary, findings: rawAiAuditFindings } = auditResult.result;
 
@@ -329,11 +373,16 @@ export class AuditEngine {
         `[AuditEngine] 📊 Calculated Deterministic Backend Metrics: Score=${metrics.overallScore}, Nielsen Compliance=${metrics.nielsenMetrics.compliance}%, WCAG Compliance=${metrics.wcagMetrics.compliance}%, Audit Coverage=${metrics.auditCoverage}%`,
       );
 
-      // 9. Persistir Hallazgos Consolidados (FAIL y NOT_EVALUABLE) en BD —
-      // P1.5.2/Opción B: PASS nunca se persiste (no aporta evidencia nueva,
-      // el Report ya resume compliance); NOT_EVALUABLE SÍ se persiste
-      // porque, a diferencia de un criterio simplemente nunca tocado, es un
-      // objeto real generado explícitamente por Gemini o por
+      // 9. Persistir Hallazgos Consolidados (FAIL, NOT_EVALUABLE y PASS) en
+      // BD — P1.7.2 (corrige P1.5.2/Opción B): PASS AHORA SÍ se persiste.
+      // Motivo del cambio: el agregado de `Report` (passCount, etc.) nunca
+      // bastó para reconstruir CUÁL criterio concreto pasó -- sin el
+      // Finding individual, un criterio "silencioso" era indistinguible
+      // entre "Gemini lo marcó PASS y se descartó" y "nunca se evaluó",
+      // violando la regla metodológica de no inferir PASS por ausencia de
+      // Finding (auditoría P1.7.1/P1.7.2). NOT_EVALUABLE sigue
+      // persistiéndose por la misma razón que antes: es un objeto real
+      // generado explícitamente por Gemini o por
       // deterministic-analyzer.service (ver P1.1: contraste RGBA inconcluso
       // y aria-labelledby no resoluble) -- antes se perdía en silencio pese
       // a ya estar correctamente contado en metrics.notEvaluableCount.
@@ -343,7 +392,7 @@ export class AuditEngine {
       // cambio nunca reflejaba una cifra verificada, solo una suposición.
       let actualPersistedFindingsCount = 0;
       for (const cf of metrics.consolidatedFindings) {
-        if (cf.status === 'FAIL' || cf.status === 'NOT_EVALUABLE') {
+        if (cf.status === 'FAIL' || cf.status === 'NOT_EVALUABLE' || cf.status === 'PASS') {
           await findingService.create(userIdStr, {
             evaluationId: evaluationId as any,
             iteration: cf.iteration,
@@ -432,9 +481,21 @@ export class AuditEngine {
             }
           : undefined,
       );
+      // [Cierre de inconsistencia del resumen ejecutivo, auditoría post-fix
+      // CLICK→CLICK 2026-11-14] `executiveSummary` (crudo, de Gemini) ya NO
+      // se persiste solo -- se antepone una sección determinística
+      // construida EXCLUSIVAMENTE desde `metrics.consolidatedFindings` (el
+      // MISMO arreglo ya usado arriba para todas las métricas del Report,
+      // nunca uno distinto), para que el resumen final nunca contradiga el
+      // veredicto final de ningún hallazgo. El texto de Gemini se conserva
+      // íntegro, solo reetiquetado como complementario/no autoritativo.
+      const verifiedSection = buildVerifiedResultsSection(metrics.consolidatedFindings);
+      const verifiedSummary = composeVerifiedSummary(verifiedSection, executiveSummary);
+
       // P1.6.2 Parte C — se reutiliza `evaluationMetrics.explorationIntegrity`
-      // ya calculado arriba, nunca se recalcula nada aparte.
-      const summaryWithDisclaimer = appendSummaryDisclaimer(executiveSummary, evaluationMetrics.explorationIntegrity);
+      // ya calculado arriba, nunca se recalcula nada aparte. Sin cambios en
+      // esta función ni en su firma -- solo recibe la cadena ya compuesta.
+      const summaryWithDisclaimer = appendSummaryDisclaimer(verifiedSummary, evaluationMetrics.explorationIntegrity);
 
       // 11. Crear/Actualizar el Reporte consolidado con métricas determinísticas
       const report = await reportRepository.findByEvaluationId(evaluationId);
@@ -464,6 +525,14 @@ export class AuditEngine {
         iterationsEvaluated: evidences.length || 1,
         overallScore: metrics.overallScore,
         metrics: evaluationMetrics,
+        // P1.7.2 — política de persistencia vigente en ESTA ejecución
+        // (siempre 'PASS_PERSISTED' desde este cambio en adelante; nunca se
+        // escribe 'PASS_DISCARDED' para una ejecución nueva) y modelo
+        // Gemini efectivo (único punto real de la llamada, ver
+        // gemini.client.ts -- no hay override por llamada, por lo que un
+        // único valor por evaluación es suficiente, ver auditoría P1.7.2.1).
+        findingPersistencePolicy: 'PASS_PERSISTED' as const,
+        geminiModel: env.GEMINI_MODEL,
         generatedAt: new Date(),
       };
 

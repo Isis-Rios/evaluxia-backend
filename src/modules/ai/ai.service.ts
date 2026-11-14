@@ -1,4 +1,4 @@
-import { GeminiClient, RetryOptions } from '@/infrastructure/gemini/gemini.client';
+import { GeminiClient, RetryOptions, GeminiAttemptRecord } from '@/infrastructure/gemini/gemini.client';
 import { TokenUsage } from '@/shared/infrastructure/metrics-tracker';
 import {
   UxAnalysisInput,
@@ -291,6 +291,8 @@ export class AiService {
     executionTimeMs: number;
     /** J3-retry-accounting (Hardening Post-Fase H) — optional, additive passthrough from GeminiClient. See gemini.client.ts. */
     retryAccounting?: { attempts: number; cumulativeUsage: TokenUsage };
+    /** P1.7.4-A — optional, additive passthrough from GeminiClient (mismo patrón que retryAccounting). */
+    attempts?: GeminiAttemptRecord[];
   }> {
     const inputValidation = V2AIInputContextSchema.safeParse(inputContext);
     if (!inputValidation.success) {
@@ -317,7 +319,7 @@ export class AiService {
     }
 
     // TEMPORARY diagnostics (payload/quota audit) — see gemini.client.ts GeminiCallDiagnostics.
-    const { data: rawResult, usage, executionTimeMs, retryAccounting } = await this.client.generateStructuredWithUsage(
+    const { data: rawResult, usage, executionTimeMs, retryAccounting, attempts } = await this.client.generateStructuredWithUsage(
       prompt,
       V2AIOutputDecisionSchema,
       undefined,
@@ -342,6 +344,7 @@ export class AiService {
       usage,
       executionTimeMs,
       ...(retryAccounting ? { retryAccounting } : {}),
+      ...(attempts ? { attempts } : {}),
     };
   }
 
@@ -355,6 +358,8 @@ export class AiService {
     executionTimeMs: number;
     /** J3-retry-accounting (Hardening Post-Fase H) — optional, additive passthrough from GeminiClient. See gemini.client.ts. Omitted on the J2 CRITICAL-block early return (no call was made, nothing to account for). */
     retryAccounting?: { attempts: number; cumulativeUsage: TokenUsage };
+    /** P1.7.4-A — optional, additive passthrough from GeminiClient. Omitted on the J2 CRITICAL-block early return (cero llamadas físicas → cero intentos). */
+    attempts?: GeminiAttemptRecord[];
   }> {
     const evidencesSummary = input.evidencesSummary || [];
 
@@ -427,7 +432,7 @@ export class AiService {
       });
     }
 
-    const { data: rawResult, usage, executionTimeMs, retryAccounting } = await this.client.generateStructuredWithUsage<V2AuditOutput>(
+    const { data: rawResult, usage, executionTimeMs, retryAccounting, attempts } = await this.client.generateStructuredWithUsage<V2AuditOutput>(
       prompt,
       V2AuditOutputSchema,
       undefined,
@@ -447,7 +452,7 @@ export class AiService {
     );
 
     const result: V2AuditOutput = rawResult;
-    return { result, usage, executionTimeMs, ...(retryAccounting ? { retryAccounting } : {}) };
+    return { result, usage, executionTimeMs, ...(retryAccounting ? { retryAccounting } : {}), ...(attempts ? { attempts } : {}) };
   }
 
   /**
@@ -482,6 +487,8 @@ export class AiService {
     usage: TokenUsage;
     executionTimeMs: number;
     retryAccounting?: { attempts: number; cumulativeUsage: TokenUsage };
+    /** P1.7.4-A — optional, additive passthrough from GeminiClient. Omitted on the J2 CRITICAL-block early return. */
+    attempts?: GeminiAttemptRecord[];
   }> {
     const applicableCriteria = resolveApplicablePrototypeCriteria();
     const prompt = this.buildPrototypeAuditPrompt(input, applicableCriteria);
@@ -500,7 +507,7 @@ export class AiService {
       };
     }
 
-    const { data: rawResult, usage, executionTimeMs, retryAccounting } =
+    const { data: rawResult, usage, executionTimeMs, retryAccounting, attempts } =
       await this.client.generateMultimodalStructuredWithUsage<PrototypeAuditOutput>(
         prompt,
         { mimeType: input.imageMimeType, data: input.imageBase64 },
@@ -509,7 +516,7 @@ export class AiService {
         { phase: 'prototype', snapshots: 1 },
       );
 
-    return { result: rawResult, usage, executionTimeMs, ...(retryAccounting ? { retryAccounting } : {}) };
+    return { result: rawResult, usage, executionTimeMs, ...(retryAccounting ? { retryAccounting } : {}), ...(attempts ? { attempts } : {}) };
   }
 
   /**
@@ -768,6 +775,21 @@ ${input.accessibilityTrees && input.accessibilityTrees.length > 0 ? `\n### ACCES
    - **WCAG 3.3.2 Etiquetas o instrucciones** (Labels visibles en formularios)
    - **WCAG 4.1.2 Nombre, función y valor** (Name, Role y Value accesibles en botones/controles)
 
+3. **CALIBRATION RULES (Avoid false positive non-compliances)**:
+   - **N-08 (Diseño estético y minimalista / CRI-18)**: Evaluate whether visual elements compete unnecessarily with primary content, generating visual clutter or cognitive noise that degrades usability. The issue does not need to be 'severe'; moderate visual noise or competition with concrete evidence warrants a FAIL. Coexistence of visible labels and matching placeholders (e.g. 'Name' / 'Name') does NOT constitute an N-08 violation (FAIL); clean forms do NOT warrant a FAIL, and visually dense but well-organized layouts must NOT receive a FAIL based on subjective aesthetic preference.
+   - **WCAG 1.3.1 (Heading Structure and Multiple H1 Elements)**: The presence of multiple <h1> elements in a document does NOT automatically constitute an accessibility violation (FAIL). Under HTML5 and modern design standards, multiple <h1> elements (such as section headings or catalog page titles) can legitimately coexist if the overall programmatic and logical hierarchy remains clear. You must NOT emit a FAIL for WCAG 1.3.1 merely because more than one <h1> exists; emit a FAIL only when there is demonstrably broken, skipped, or misleading structural hierarchy that disorients assistive technologies.
+
+---
+
+### EXECUTIVE SUMMARY RULE:
+Your 'executiveSummary' MUST be strictly consistent with the 'status' of the 'findings' you are producing in this SAME response -- it must never contradict your own structured verdicts.
+1. Present something as a confirmed problem, non-compliance, or violation ONLY when the corresponding finding's 'status' is "FAIL". A "PASS" finding must NEVER be described in the summary as a violation, non-compliance, incumplimiento, or confirmed issue -- not even as a stylistic critique -- because "PASS" means that criterion was met.
+2. A "NOT_EVALUABLE" finding must NEVER be presented as a confirmed, demonstrated problem either. If you mention it at all, phrase it explicitly as an open question or a limitation of this exploration (e.g. "no fue posible determinar si..."), never as a defect.
+3. If you want to mention an "opportunity for improvement" or a stylistic observation that is NOT backed by any "FAIL" finding, phrase it clearly as a suggestion or preference and keep it explicitly and visibly separate from confirmed non-compliances -- never blend the two under the same heading or wording.
+4. Do not selectively omit the "FAIL" findings you are emitting in this same response: the summary must reflect the confirmed non-compliances it actually contains, not substitute them with unrelated or lower-priority observations.
+5. Do not invent criteria, evidence, affected elements, or non-compliances that are not backed by the 'findings' array you are producing in this same response.
+6. Keep the summary concise, clear, and useful for the reader -- this rule governs WHAT you may claim and HOW you must word it, not how long the summary has to be.
+
 ---
 
 Respond ONLY with valid JSON matching this exact structure:
@@ -936,6 +958,13 @@ ${criteriaList}
 
 ---
 
+### USABILITY CALIBRATION RULE FOR AESTHETIC AND MINIMALIST DESIGN (N-08 / CRI-33):
+1. Methodological Criterion (Annex C, CRI-33): Evaluate whether visual elements compete unnecessarily with primary content, generating visual noise or impairing hierarchy and grouping. The issue does not need to be 'severe'; moderate clutter or visual competition constitutes an N-08 violation (FAIL) with concrete visual evidence showing how it degrades perception or scanning.
+2. Forms, Labels, and Placeholders: Visible labels with matching placeholders (e.g. 'Name' / 'Name') do NOT constitute an N-08 violation (FAIL). Clean forms with matching placeholders do NOT warrant a FAIL.
+3. Avoiding False Positives: A visually dense interface is NOT automatically a failure if it maintains clear organization and visual hierarchy. Do NOT penalize subjective aesthetic choices without concrete evidence of unnecessary competition. Every N-08 FAIL must cite identifiable visual evidence showing how competing elements degrade usability.
+
+---
+
 ### VISUAL EVIDENCE RULES:
 1. Every item in a finding's 'evidence' array MUST have 'type': "VISUAL_OBSERVATION".
 2. Every evidence item MUST include 'elementDescription' (a specific, concrete description of the element
@@ -954,8 +983,11 @@ ${propertyList}
    text, you may use property: "visibleText" with value: "" (empty string), but ONLY when the image actually
    supports that absence for that specific element.
 7. Do NOT force a property/value pair when no whitelisted property can faithfully represent what you
-   observed -- inventing a value is worse than leaving it out. In that case, describe the limitation using
-   'context' only, and explain why it cannot be stated more precisely.
+   observed -- inventing a value is worse than leaving it out. In that case, set BOTH 'property' and 'value'
+   to null, describe the limitation using 'context' only, and explain why it cannot be stated more precisely.
+   CRITICAL PARITY RULE: 'property' and 'value' MUST always appear together (either BOTH are non-empty strings,
+   e.g. "property": "visualLabel", "value": "Correo electrónico", or BOTH are null). NEVER set a non-null
+   'property' with "value": null (or vice versa) -- doing so is a schema violation that will reject your response.
 8. An absence of visible text is a purely VISUAL observation. It NEVER proves, and must NEVER be described
    as proving, the absence of a DOM accessible name (aria-label, alt), a keyboard/focus problem, dynamic
    behavior, or anything about assistive technology -- all of those are invisible to a static image.
@@ -1158,15 +1190,15 @@ Respond ONLY with valid JSON matching this exact structure:
       "confidence": "<high|medium|low>",
       "heuristicCode": "<e.g. N-04, or null if this is a WCAG finding>",
       "heuristicName": "<e.g. Consistencia y estándares, or null>",
-      "wcagCriterion": "<exactly one code from the applicable list above, or null if this is a Nielsen finding>",
+      "wcagCriterion": "<exactly one code from the applicable list above with 'WCAG ' prefix, e.g. WCAG 1.4.3 Contraste mínimo, or null if this is a Nielsen finding>",
       "description": "<detailed problem description grounded in what is visible in the image>",
       "evidence": [
         {
           "type": "VISUAL_OBSERVATION",
           "elementDescription": "<specific description of the observed element, or null if using context>",
           "region": "<one of the 10 allowed region values, or null>",
-          "property": "<one of the whitelisted property names, or null>",
-          "value": "<observed value for that property, or null>",
+          "property": "<one of the whitelisted property names, e.g. visualLabel, or null (MUST be null if value is null)>",
+          "value": "<observed non-empty string value for that property, e.g. Correo electrónico, or null (NEVER null when property is present)>",
           "context": "<page-level narrative context, or null>"
         }
       ],

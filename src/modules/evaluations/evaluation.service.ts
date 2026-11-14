@@ -19,9 +19,13 @@ import { automationService } from '@/modules/automation/automation.service';
 import { contextBuilder } from './services/context-builder.service';
 import { ruleEngine } from './services/rule-engine.service';
 import { auditEngine } from './services/audit-engine.service';
+import type { GeminiAttemptRecord } from '@/infrastructure/gemini/gemini.client';
 import { V2AIOutputDecision } from '@/modules/ai/contracts/ai.contracts';
 import { snapshotEvidenceService } from '@/modules/snapshots/snapshot-evidence.service';
 import { calculateDynamicMaxIterations } from './services/dynamic-iterations.service';
+import { validateRecoveryEquivalence, formatNavigateTargetMarker, formatClickTargetHrefMarker, resolveUniqueLinkHref } from './services/recovery-equivalence-validator';
+import type { KnownLinkEvidence } from './services/recovery-equivalence-validator';
+import type { InteractiveElement } from '@/modules/automation/automation.service';
 
 export interface ActionExecutionOutcome {
   previousAction: { actionType: string; description: string; result: 'success' | 'failure' };
@@ -44,34 +48,197 @@ export interface ActionExecutionOutcome {
  *
  * Extracted as a standalone pure function so this specific mapping is unit
  * testable without a live browser/DB/Gemini.
+ *
+ * [Cierre de brecha NAVIGATE, auditoría posterior 2026-11-13] Para
+ * `actionType === 'NAVIGATE'`, la URL realmente intentada (`inputData`) se
+ * añade a `description` mediante un marcador determinista
+ * (`formatNavigateTargetMarker`) en AMBOS desenlaces (éxito y fallo) --
+ * nunca depende de que el mensaje de error de Playwright la incluya (no
+ * siempre ocurre). Es lo único que permite, en una iteración POSTERIOR,
+ * verificar con evidencia real que una recuperación NAVIGATE coincide
+ * exactamente con el destino original (ver `recovery-equivalence-validator.ts`).
+ * No se añade para ningún otro `actionType`: no cambia ningún texto
+ * preexistente que otros consumidores de `description` ya busquen.
+ *
+ * [Cierre de falso rechazo CLICK→CLICK, auditoría de ejecución OpenCart
+ * 2026-11-14] Mismo mecanismo, marcador hermano e independiente: cuando
+ * `actionType === 'CLICK'` y el llamador ya resolvió (en el snapshot de ESTA
+ * misma iteración, nunca en otra) que el selector corresponde a exactamente
+ * un enlace conocido, `resolvedTargetHref` trae su `href` real y se añade
+ * con `formatClickTargetHrefMarker`. Si el CLICK no era sobre un enlace
+ * verificable (botón, o selector ambiguo/no resuelto), `resolvedTargetHref`
+ * es `null` y no se añade ningún marcador -- el comportamiento para esos
+ * casos no cambia en absoluto.
  */
 export function resolveActionOutcome(
   actionResult: { success: boolean; error?: string },
-  currentAction: { actionType: string; rationale: string; targetElement: { value?: string } | null },
+  currentAction: { actionType: string; rationale: string; targetElement: { value?: string } | null; inputData?: string },
   currentObjective: string,
+  resolvedTargetHref?: string | null,
 ): ActionExecutionOutcome {
+  const navigateMarker =
+    currentAction.actionType === 'NAVIGATE' && currentAction.inputData
+      ? ` ${formatNavigateTargetMarker(currentAction.inputData)}`
+      : '';
+  const clickHrefMarker =
+    currentAction.actionType === 'CLICK' && resolvedTargetHref
+      ? ` ${formatClickTargetHrefMarker(resolvedTargetHref)}`
+      : '';
+  // Mutuamente excluyentes en la práctica (una acción es NAVIGATE o CLICK,
+  // nunca ambas), concatenar es seguro: a lo sumo uno de los dos no está vacío.
+  const trailingMarker = `${navigateMarker}${clickHrefMarker}`;
+
   if (actionResult.success) {
     return {
       previousAction: {
         actionType: currentAction.actionType,
-        description: currentAction.rationale,
+        description: `${currentAction.rationale}${trailingMarker}`,
         result: 'success',
       },
       blockingError: null,
       completedStep: currentObjective,
-      nextObjective: `Después de realizar ${currentAction.actionType} en ${currentAction.targetElement?.value}`,
+      nextObjective: `Después de realizar ${currentAction.actionType} en ${currentAction.targetElement?.value ?? currentAction.inputData}`,
     };
   }
 
   return {
     previousAction: {
       actionType: currentAction.actionType,
-      description: `Failed to execute: ${actionResult.error || 'unknown error'}`,
+      description: `Failed to execute: ${actionResult.error || 'unknown error'}${trailingMarker}`,
       result: 'failure',
     },
-    blockingError: `Action failed: ${actionResult.error || 'unknown error'}`,
+    blockingError: `Action failed: ${actionResult.error || 'unknown error'}${trailingMarker}`,
     completedStep: null,
     nextObjective: null,
+  };
+}
+
+export interface RecoveryGuardDecision {
+  shouldExecute: boolean;
+  /** Non-null solo cuando `shouldExecute` es `false`: motivo a persistir como `blockingError`. */
+  rejectionBlockingError: string | null;
+}
+
+/**
+ * Cierre de brecha Rule 0 → Decision Engine (auditoría 2026-11-13, posterior
+ * a los Riesgos 1/5 ya corregidos en rule-engine.service.ts/automation.service.ts).
+ *
+ * Extraída de `runEvaluation` por el mismo motivo que `resolveActionOutcome`:
+ * poder probarla sin navegador/DB/Gemini real. Consolida DOS guardas sobre la
+ * acción que está a punto de ejecutarse en Playwright, evaluadas en orden:
+ *
+ * 1. `isRepeatingFailedSelector` (preexistente, comportamiento sin cambios):
+ *    nunca reintentar inmediatamente el selector exacto que acaba de fallar.
+ * 2. Equivalencia semántica de recuperación (NUEVA): quando RuleEngine no
+ *    pudo resolver la recuperación y delegó en el Decision Engine (Gemini)
+ *    — es decir, `blockingError` estaba activo Y `decisionCameFromRuleEngine`
+ *    es `false` — la acción propuesta por Gemini se valida contra la acción
+ *    que falló mediante `validateRecoveryEquivalence` (misma categoría de
+ *    interacción + token léxico verificable + ausencia de lenguaje
+ *    destructivo/transaccional). Si no se puede demostrar la equivalencia,
+ *    la acción NUNCA se ejecuta: se detiene el flujo de forma controlada,
+ *    igual que ya hacía `isRepeatingFailedSelector`.
+ *
+ * Esta guarda NUNCA se activa cuando `blockingError` es `null` (decisión
+ * ordinaria de exploración, sin recuperación en curso) ni cuando la decisión
+ * vino de RuleEngine (que ya valida equivalencia internamente y cuenta con
+ * su propia batería de pruebas en rule-engine-recovery.test.ts).
+ *
+ * [Cierre de brecha NAVIGATE, auditoría posterior 2026-11-13] `NAVIGATE` es
+ * el único `actionType` cuyo contrato NO requiere `targetElement` (usa
+ * `inputData` como URL -- ver automation.service.ts). Antes de esta
+ * corrección, eso hacía que el chequeo `!currentAction.targetElement` de
+ * arriba tratara TODA recuperación NAVIGATE como "nada que validar"
+ * (`shouldExecute: true` sin inspeccionar la URL). Ahora se trata como un
+ * caso explícito: se valida con `validateRecoveryEquivalence` igual que
+ * cualquier otra recuperación, pero pasándole `navigateTargetUrl`
+ * (`inputData`) en vez de un selector/elemento DOM, más la evidencia
+ * estructurada de enlaces reales (`knownLinks`) necesaria para verificar un
+ * `href`. Nunca se usa `targetElement` como prueba de equivalencia para
+ * NAVIGATE (no es lo que `page.goto()` ejecuta).
+ */
+export function evaluateRecoveryGuard(params: {
+  blockingError: string | null;
+  /** `true` cuando esta iteración fue resuelta por RuleEngine (ya validada internamente); `false` cuando la decisión vino del Decision Engine (Gemini). */
+  decisionCameFromRuleEngine: boolean;
+  recommendedNextStep: string;
+  currentAction: { actionType: string; targetElement: { value?: string } | null; inputData?: string } | null;
+  lastAction: { actionType: string; description: string; result: 'success' | 'failure' } | undefined;
+  visibleDOMSummary: InteractiveElement[];
+  /** Evidencia estructurada de enlaces reales (href) de la página actual, necesaria para validar una recuperación NAVIGATE sobre un CLICK fallido. */
+  knownLinks: KnownLinkEvidence[];
+}): RecoveryGuardDecision {
+  const { currentAction, lastAction } = params;
+
+  const isRepeatingFailedSelector =
+    !!lastAction &&
+    lastAction.result === 'failure' &&
+    !!currentAction?.targetElement?.value &&
+    lastAction.description.includes(currentAction.targetElement.value);
+
+  if (isRepeatingFailedSelector) {
+    return {
+      shouldExecute: false,
+      rejectionBlockingError: `Action stopped: avoiding repetitive failure on selector '${currentAction?.targetElement?.value}'`,
+    };
+  }
+
+  const isRecoveryDecision = !!params.blockingError && !params.decisionCameFromRuleEngine;
+  const isNavigateCandidate = (currentAction?.actionType || '').toUpperCase() === 'NAVIGATE';
+
+  if (
+    !isRecoveryDecision ||
+    params.recommendedNextStep !== 'executeSuggestedAction' ||
+    !currentAction ||
+    (!currentAction.targetElement && !isNavigateCandidate)
+  ) {
+    return { shouldExecute: true, rejectionBlockingError: null };
+  }
+
+  const equivalence = isNavigateCandidate
+    ? validateRecoveryEquivalence(
+        { actionType: lastAction?.actionType || '', description: lastAction?.description || '' },
+        {
+          actionType: currentAction.actionType,
+          selector: null,
+          elementType: null,
+          text: null,
+          ariaLabel: null,
+          navigateTargetUrl: currentAction.inputData ?? null,
+        },
+        params.knownLinks,
+      )
+    : validateRecoveryEquivalence(
+        { actionType: lastAction?.actionType || '', description: lastAction?.description || '' },
+        (() => {
+          const candidateSelector = currentAction.targetElement!.value ?? null;
+          const matched = params.visibleDOMSummary.find((el) => el.selector === candidateSelector);
+          return {
+            actionType: currentAction.actionType,
+            selector: candidateSelector,
+            elementType: matched?.type ?? null,
+            text: matched?.text ?? null,
+            ariaLabel: matched?.ariaLabel ?? null,
+          };
+        })(),
+        // [Corrección de cableado, auditoría pre-cierre MVP 2026-11-14] Esta
+        // rama (candidato CLICK, no NAVIGATE) nunca entregaba `knownLinks` --
+        // `validateRecoveryEquivalence` lo recibía como su valor por defecto
+        // `[]`, así que `resolveUniqueLinkHref` SIEMPRE retornaba `null`,
+        // rechazando toda recuperación CLICK→CLICK por "falta de evidencia"
+        // incluso cuando el snapshot SÍ contenía el href coincidente (caso
+        // real confirmado: evaluación OpenCart 6af7bafc9f984355779c076c). La
+        // rama NAVIGATE (arriba) ya entregaba `params.knownLinks`
+        // correctamente -- esto solo faltaba en esta rama.
+        params.knownLinks,
+      );
+
+  if (equivalence.isEquivalent) {
+    return { shouldExecute: true, rejectionBlockingError: null };
+  }
+  return {
+    shouldExecute: false,
+    rejectionBlockingError: `Recovery action rejected: ${equivalence.reason}`,
   };
 }
 
@@ -404,6 +571,10 @@ export class EvaluationService {
         // resolves the decision (genuinely zero Gemini tokens spent that
         // iteration), populated from aiCall.usage only on the Gemini path.
         let iterationTokenUsage = { promptTokens: 0, outputTokens: 0 };
+        // P1.7.4-A: detalle de intentos físicos — SOLO existe en el camino
+        // Gemini; una iteración resuelta por RuleEngine no hizo ninguna
+        // llamada física y por tanto no lleva attempts ni invocationOutcome.
+        let geminiAttempts: GeminiAttemptRecord[] | undefined;
 
         if (suggestedAction) {
           console.log(`[EvaluationService] RuleEngine intercepted and proposed action:`, suggestedAction);
@@ -440,10 +611,27 @@ export class EvaluationService {
         } else {
           // 3.5. Invocar Decision Engine (AI Decision Service)
           console.log(`[EvaluationService] RuleEngine could not decide. Invoking AI Decision Service...`);
-          const aiCall = await aiService.makeDecision(context);
+          let aiCall: Awaited<ReturnType<typeof aiService.makeDecision>>;
+          try {
+            aiCall = await aiService.makeDecision(context);
+          } catch (decisionError) {
+            // P1.7.4-A: persistir el detalle de los intentos físicos ya
+            // facturados ANTES de propagar el fallo (el catch exterior no
+            // conoce los intentos; sin esto una invocación fallida no dejaba
+            // rastro). Si el error no trae intentos (p. ej. bloqueo
+            // J2-CRITICAL previo a toda llamada), el helper no registra nada.
+            await aiInteractionService.logFailedInvocationFromError(
+              evaluationId,
+              'PHASE_1',
+              currentIteration,
+              decisionError,
+            );
+            throw decisionError;
+          }
           decisionResult = aiCall.result;
           executionTimeMs = aiCall.executionTimeMs;
           iterationTokenUsage = { promptTokens: aiCall.usage.promptTokens, outputTokens: aiCall.usage.outputTokens };
+          geminiAttempts = aiCall.attempts;
 
           phase1Calls += 1;
           phase1PromptTokens += aiCall.usage.promptTokens;
@@ -455,43 +643,116 @@ export class EvaluationService {
         // 3.6. En Fase 1 (Exploración) no se procesan ni persisten hallazgos.
         // La auditoría de usabilidad y accesibilidad fue desacoplada a la Fase 2 (AuditEngine).
 
-        // 3.7. Registrar Interacción de IA / Log de la iteración
-        await aiInteractionService.logInteraction(
-          evaluationId,
-          currentIteration,
-          executionTimeMs,
-          {
-            screenshotUrl,
-            url: snapshot.url,
-            title: snapshot.title,
-            suggestedAction: decisionResult.suggestedAction,
-            notes: decisionResult.evaluationSummary.notes,
-            confidenceLevel: decisionResult.evaluationSummary.confidenceLevel,
-            confusionProbability: decisionResult.riskAssessment.confusionProbability,
-            abandonmentRisk: decisionResult.riskAssessment.abandonmentRisk,
-            errorRisk: decisionResult.riskAssessment.errorRisk,
-          },
-          iterationTokenUsage.promptTokens,
-          iterationTokenUsage.outputTokens,
-        );
+        // 3.7. Registrar Interacción de IA / Log de la iteración.
+        // P1.7.4-A: mismo registro por iteración de siempre (mismos tokens y
+        // metadata), ahora etiquetado con phase y — SOLO cuando esta
+        // iteración hizo llamadas físicas a Gemini — con su detalle de
+        // intentos e invocationOutcome. Una iteración RuleEngine conserva su
+        // forma histórica (sin attempts, sin outcome).
+        // (Punto 2, cierre P1.7.4-A): protegido en try/catch — un fallo de
+        // persistencia de esta traza NUNCA debe abortar la iteración ni la
+        // exploración (antes de este cierre, un error aquí se propagaba sin
+        // control); se loguea con contexto suficiente, sin reintentos.
+        try {
+          await aiInteractionService.logInvocation({
+            evaluationId,
+            phase: 'PHASE_1',
+            iteration: currentIteration,
+            executionTimeMs,
+            metadata: {
+              screenshotUrl,
+              url: snapshot.url,
+              title: snapshot.title,
+              suggestedAction: decisionResult.suggestedAction,
+              notes: decisionResult.evaluationSummary.notes,
+              confidenceLevel: decisionResult.evaluationSummary.confidenceLevel,
+              confusionProbability: decisionResult.riskAssessment.confusionProbability,
+              abandonmentRisk: decisionResult.riskAssessment.abandonmentRisk,
+              errorRisk: decisionResult.riskAssessment.errorRisk,
+            },
+            requestTokens: iterationTokenUsage.promptTokens,
+            responseTokens: iterationTokenUsage.outputTokens,
+            ...(geminiAttempts && geminiAttempts.length > 0
+              ? { invocationOutcome: 'SUCCESS' as const, attempts: geminiAttempts }
+              : {}),
+          });
+        } catch (traceError) {
+          console.error(
+            `[EvaluationService] ❌ Fallo al persistir AiInteraction (evaluationId=${evaluationId}, phase=PHASE_1, iteration=${currentIteration}, invocationOutcome=${geminiAttempts && geminiAttempts.length > 0 ? 'SUCCESS' : 'n/a (RuleEngine)'}) — la traza de esta iteración se pierde; la exploración continúa sin cambios:`,
+            traceError,
+          );
+        }
 
         // 3.8. Ejecutar Acción en Playwright si corresponde
         const currentAction = decisionResult.suggestedAction;
 
-        if (decisionResult.flowControl.recommendedNextStep === 'executeSuggestedAction' && currentAction && currentAction.targetElement) {
-          console.log(`[EvaluationService] Executing browser action: ${currentAction.actionType} on selector ${currentAction.targetElement.value}`);
+        // Guardia de recuperación: (1) evitar reintentar inmediatamente el mismo
+        // selector que acaba de fallar (preexistente, sin cambios de comportamiento);
+        // (2) [cierre de brecha Rule 0 -> Decision Engine] cuando la decisión viene
+        // de Gemini durante una recuperación activa (blockingError), exigir
+        // equivalencia semántica verificable antes de ejecutar -- ver
+        // evaluateRecoveryGuard/validateRecoveryEquivalence para el detalle.
+        const lastAction = previousActions[previousActions.length - 1];
+        // Evidencia estructurada de enlaces reales (con href) para validar una
+        // recuperación NAVIGATE sobre un CLICK fallido -- `visibleDOMSummary`
+        // (InteractiveElement) no expone `href`, pero `snapshot.links`
+        // (LinkEvidence, ya capturado en esta misma iteración) sí.
+        const knownLinks: KnownLinkEvidence[] = (snapshot.links || []).map((l) => ({ selector: l.selector, href: l.href }));
+        const recoveryGuard = evaluateRecoveryGuard({
+          blockingError,
+          decisionCameFromRuleEngine: !!suggestedAction,
+          recommendedNextStep: decisionResult.flowControl.recommendedNextStep,
+          currentAction,
+          lastAction,
+          visibleDOMSummary: context.technicalContext.visibleDOMSummary || [],
+          knownLinks,
+        });
+
+        if (!recoveryGuard.shouldExecute) {
+          console.warn(`[EvaluationService] Recovery guard blocked action execution: ${recoveryGuard.rejectionBlockingError}`);
+          flowCanContinue = false;
+          blockingError = recoveryGuard.rejectionBlockingError;
+          // [Cierre de no-op silencioso, auditoría posterior 2026-11-13] Una
+          // recuperación rechazada aquí NUNCA debe caer silenciosamente a la
+          // rama de "decisión inválida" ni a una iteración muda: este mismo
+          // `if` ya es su registro explícito (blockingError no-nulo ->
+          // classifyExplorationTermination la clasifica como ACTION_FAILED,
+          // igual que isRepeatingFailedSelector). No se ejecuta nada más
+          // abajo para esta iteración.
+        } else if (
+          decisionResult.flowControl.recommendedNextStep === 'executeSuggestedAction' &&
+          currentAction &&
+          // [Cierre de no-op silencioso] NAVIGATE nunca requiere
+          // `targetElement` (usa `inputData` como URL, ver
+          // automation.service.ts) -- antes de esta corrección, un NAVIGATE
+          // legítimo con `targetElement: null` no coincidía con NINGUNA rama
+          // de esta cadena y la iteración avanzaba sin ejecutar nada ni
+          // registrar ningún resultado. Ahora se ejecuta igual que cualquier
+          // otra acción, usando `inputData` cuando no hay `targetElement`.
+          (currentAction.targetElement || currentAction.actionType === 'NAVIGATE')
+        ) {
+          const targetDescriptor = currentAction.targetElement?.value ?? currentAction.inputData ?? '(sin selector/URL)';
+          console.log(`[EvaluationService] Executing browser action: ${currentAction.actionType} on ${targetDescriptor}`);
           const actionResult = await automationService.executeAction(evaluationId, {
             actionType: currentAction.actionType,
-            selector: currentAction.targetElement.value,
+            selector: currentAction.targetElement?.value,
             value: currentAction.inputData ?? '',
-            targetElement: currentAction.targetElement,
+            targetElement: currentAction.targetElement ?? undefined,
           });
 
           if (!actionResult.success) {
             console.error(`[EvaluationService] Action execution failed:`, actionResult.error);
           }
 
-          const outcome = resolveActionOutcome(actionResult, currentAction, currentObjective);
+          // [Cierre de falso rechazo CLICK→CLICK, auditoría OpenCart 2026-11-14]
+          // Resuelto en EL MISMO snapshot (knownLinks, iteración actual) con el
+          // que se decidió esta acción -- nunca se mezcla con el de otra
+          // iteración. null si el CLICK no era sobre un `<a href>` real o el
+          // selector no resuelve a exactamente un enlace conocido.
+          const resolvedTargetHref =
+            currentAction.actionType === 'CLICK' ? resolveUniqueLinkHref(currentAction.targetElement?.value, knownLinks) : null;
+
+          const outcome = resolveActionOutcome(actionResult, currentAction, currentObjective, resolvedTargetHref);
           previousActions.push(outcome.previousAction);
           blockingError = outcome.blockingError;
           // P1.6.2 Parte B — delega en la función pura probada en

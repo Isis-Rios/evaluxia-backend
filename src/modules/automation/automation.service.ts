@@ -316,7 +316,65 @@ export class AutomationService {
 
         // Helper to extract interactive elements for visibleDOMSummary (Preserved 100% for Phase 1)
         const getInteractiveElements = (): InteractiveElement[] => {
-          const elements = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"]'));
+          const rawElements = Array.from(document.querySelectorAll('a[href], button, input, select, textarea, [role="button"], [role="link"], [role="checkbox"], [role="radio"]'));
+
+          // Filter out elements that are not effectively visible or not genuinely interactable in the current viewport
+          const elements = rawElements.filter((el): boolean => {
+            // 1. Explicit HTML hidden, inert, or aria-hidden container
+            if (el.hasAttribute('hidden') || el.closest('[hidden]')) return false;
+            if (el.hasAttribute('inert') || el.closest('[inert]')) return false;
+            if (el.getAttribute('aria-hidden') === 'true' || el.closest('[aria-hidden="true"]')) return false;
+
+            // 2. Computed styles: display, visibility, opacity
+            const style = window.getComputedStyle(el);
+            if (style.display === 'none') return false;
+            if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+            if (parseFloat(style.opacity || '1') === 0) return false;
+
+            // 3. Modern browser checkVisibility API if available in Chromium
+            if (typeof el.checkVisibility === 'function') {
+              if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) {
+                return false;
+              }
+            }
+
+            // 4. Geometry and layout dimensions: element must occupy physical pixels in layout
+            const rect = el.getBoundingClientRect();
+            if (rect.width <= 0 || rect.height <= 0) return false;
+            if (el.getClientRects().length === 0) return false;
+
+            // 5. Exclude invisible screen-reader-only utility elements (e.g. .sr-only / .visually-hidden with 1x1 rect)
+            if (rect.width <= 1 && rect.height <= 1) return false;
+
+            // 6. Exclude accessibility "skip links" (e.g. <a href="#main" class="sf-skip-link">
+            // Skip to main content</a>): deliberately positioned far outside the canvas until
+            // they receive keyboard focus, but with a normal, positive-size bounding box that
+            // passes every check above. Playwright can never click/scroll to these the way a
+            // real user would (focus-only, not mouse-only), so a timeout here is not a flaky
+            // edge case -- it is guaranteed. Two independent, narrow signals, NEITHER of which
+            // excludes ordinary below-the-fold content (positive coordinates, reachable by
+            // scrollIntoViewIfNeeded, are never touched by either check):
+            //   a) Geometry: coordinates placed far into negative space (the standard
+            //      "position offscreen until focus" technique), not merely "outside the
+            //      current scroll position" (which below-the-fold content also is).
+            //   b) Known naming convention: class or href fragment matching the skip-link
+            //      pattern, regardless of its current position.
+            const OFF_CANVAS_THRESHOLD = -1000;
+            const isFarOffCanvas =
+              rect.top < OFF_CANVAS_THRESHOLD ||
+              rect.left < OFF_CANVAS_THRESHOLD ||
+              rect.bottom < OFF_CANVAS_THRESHOLD ||
+              rect.right < OFF_CANVAS_THRESHOLD;
+            if (isFarOffCanvas) return false;
+
+            const classAttr = (el.getAttribute('class') || '').toLowerCase();
+            const hrefAttr = (el.getAttribute('href') || '').toLowerCase();
+            const isSkipLinkClass = /skip[-_]?(to[-_]?)?(content|main|nav|link)/.test(classAttr);
+            const isSkipLinkHref = /^#(main|content|maincontent|main-content|skip)/.test(hrefAttr);
+            if (isSkipLinkClass || isSkipLinkHref) return false;
+
+            return true;
+          });
           
           return elements.map((el): InteractiveElement => {
             const tagName = el.tagName.toLowerCase();
@@ -344,7 +402,14 @@ export class AutomationService {
 
             const text = getText(el) || el.getAttribute('value') || '';
             const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('aria-labelledby') || el.getAttribute('alt') || el.getAttribute('title') || '';
-            const isDisabled = el.hasAttribute('disabled') || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('disabled');
+            
+            // Accurate evaluation of disabled state
+            const style = window.getComputedStyle(el);
+            const isHtmlDisabled = el.hasAttribute('disabled') || (el as any).disabled === true;
+            const isAriaDisabled = el.getAttribute('aria-disabled') === 'true';
+            const isClassDisabled = (el.getAttribute('class') || '').toLowerCase().includes('disabled');
+            const isPointerNone = style.pointerEvents === 'none';
+            const isDisabled = isHtmlDisabled || isAriaDisabled || isClassDisabled || isPointerNone;
             
             // `el.className` is a plain string on HTMLElement but an
             // SVGAnimatedString (no `.toLowerCase`) on SVGElement — this

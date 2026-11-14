@@ -174,8 +174,16 @@ function runTests() {
     assert(prompt.includes('"alt": "Hero background"'), 'Test 7: el alt de la imagen se conserva en el prompt');
 
     // Sanity: the prompt should be small (no MB-scale content), unlike the
-    // pre-transformation case would have been.
-    assert(prompt.length < 10_000, `Test 7: el prompt final es pequeño (${prompt.length} chars) — el base64 de ~1.4M chars no infló el payload`);
+    // pre-transformation case would have been. Threshold raised from the
+    // original 10_000 (auditoría 2026-11-14, EXECUTIVE SUMMARY RULE añadida
+    // a buildV2AuditPrompt): esa regla estática añade ~1.7k caracteres a TODO
+    // prompt WEB, independientemente del contenido de evidencia -- el umbral
+    // original estaba calibrado contra la plantilla estática previa, no es un
+    // límite semántico del mecanismo de compresión. 20_000 sigue siendo ~2
+    // órdenes de magnitud menor que el base64 sin comprimir (~1.4M chars),
+    // así que la prueba sigue demostrando lo mismo: ausencia de inflación por
+    // la imagen, con margen para el nuevo texto estático legítimo del prompt.
+    assert(prompt.length < 20_000, `Test 7: el prompt final es pequeño (${prompt.length} chars) — el base64 de ~1.4M chars no infló el payload`);
   }
 
   console.log(`\n========================================`);
