@@ -597,6 +597,8 @@ ${JSON.stringify(ctx.technicalContext.visibleDOMSummary, null, 2)}
 
 2. Absolute Rule: Do NOT invent hidden or non-existent selectors. Use exact CSS selectors matching the elements provided above.
 
+3. Linguistic Neutrality: The persona/flow wording language is NOT a user language preference or proficiency limit; never infer language competence from name, country, city, age, or profession. Navigate visible DOM elements in their original language without assuming the UI must match the persona's language (do not switch UI language unless required by the flow or a multilingual entry gate). Write 'rationale' in the persona/flow's predominant language while keeping selectors and referenced UI texts verbatim.
+
 ---
 
 Respond ONLY with valid JSON matching this exact structure:
@@ -680,6 +682,12 @@ Your task is to conduct a rigorous, formal UX and Accessibility Audit on the ful
 2. If evidence for a criterion is insufficient or absent, classify the status as "NOT_EVALUABLE" or "PASS". Do NOT generate speculative, hypothetical conditional findings using words like "might", "could", "may", "if implemented".
 3. Every "FAIL" finding MUST include a concrete, actionable recommendation explaining exactly what the developer or designer should fix. NEVER use the heuristic code or name as the recommendation.
 4. Each finding's 'wcagCriterion' MUST contain EXACTLY ONE WCAG code (e.g. "WCAG 3.3.2 Etiquetas o instrucciones"). NEVER combine multiple WCAG codes into a single 'wcagCriterion' string. If the same element/problem is independently supported by evidence for more than one WCAG criterion, emit ONE SEPARATE finding per criterion (same 'affectedElement', its own 'evidence' and 'recommendation' for that specific criterion). Do NOT create an additional finding for a criterion that is merely plausible, related, or inferable — only for a criterion whose own evidence meets the same bar as rule 1 above.
+
+---
+
+### LINGUISTIC NEUTRALITY & OUTPUT LANGUAGE:
+1. Evaluation Neutrality: The language used to write the persona or session context is NOT a localization requirement; never infer language proficiency from name, country, city, age, or profession. Do NOT mark an English UI as FAIL because the persona is in Spanish (nor vice versa). Judge strictly from observed DOM texts, structures, properties, and behaviors; context clarifies purpose without replacing or reinterpreting visible labels. Still report genuine internal language inconsistencies (e.g. mixed languages within the same UI), terminology errors, or barriers backed by explicit language requirements; otherwise apply abstention (NOT_EVALUABLE) when evidence is insufficient.
+2. Output Language: Write narrative fields coherently in the predominant language of the persona's descriptive texts (or session context when more representative) without enforcing a fixed global language. Keep observed UI texts, labels, selectors, and values verbatim in evidence (never translate evidence away from the original UI). Report wording must never influence PASS/FAIL/NOT_EVALUABLE classification.
 
 ---
 
@@ -915,6 +923,12 @@ perspective of a specific user persona, using ONLY what is visually observable i
 4. Do NOT invent a CSS selector, an HTML tag, or any DOM-only property. This is an image, not a webpage.
 5. Every "FAIL" finding MUST include a concrete, actionable recommendation. NEVER use the heuristic code
    or name as the recommendation.
+
+---
+
+### LINGUISTIC NEUTRALITY & OUTPUT LANGUAGE:
+1. Evaluation Neutrality: The language used to write the persona or prototype description is NOT a localization requirement; never infer language proficiency from name, country, city, age, or profession. Do NOT mark an English UI as FAIL because the persona/description is in Spanish (nor vice versa). Judge strictly from texts, labels, and visual properties actually observed in the image; the description clarifies product function without replacing or reinterpreting visible labels. Still report genuine internal language inconsistencies (e.g. mixed languages within the same screen), terminology errors, or barriers backed by explicit language requirements; otherwise apply abstention (NOT_EVALUABLE) when evidence is insufficient.
+2. Output Language: Write narrative fields coherently in the predominant language of the persona's descriptive texts (or the prototype description when more representative) without enforcing a fixed global language. Keep observed UI texts, labels, and values verbatim in evidence (never translate evidence away from the original image). Report wording must never influence PASS/FAIL/NOT_EVALUABLE classification.
 
 ---
 
